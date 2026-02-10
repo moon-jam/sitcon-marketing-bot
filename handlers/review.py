@@ -96,6 +96,8 @@ def format_review_list(reviews: list[dict], title: str) -> str:
         lines.append(f"{status_emoji} {r['sponsor_name']}")
         lines.append(f"   連結：{r['link']}")
         lines.append(f"   提交者：@{r['submitter_username']}")
+        if r.get("comment"):
+            lines.append(f"   💬 評語：{r['comment']}")
         lines.append("")
 
     return "\n".join(lines)
@@ -255,17 +257,18 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """處理 /review_need_fix 指令 - 顯示待審核項目選單"""
+    """處理 /review_need_fix 指令 - 顯示待審核項目選單，可選帶評語"""
     if not update.message:
         return
 
-    # 如果有提供參數，直接標記該項目
-    if context.args:
-        sponsor_name = " ".join(context.args)
-        await _do_need_fix(update, context, sponsor_name)
-        return
+    # 解析評語（如果有的話）
+    comment = " ".join(context.args) if context.args else None
 
-    # 沒有參數時，顯示選單（顯示 pending 狀態的項目）
+    # 儲存評語到 user_data（給 callback 使用）
+    if comment:
+        context.user_data["need_fix_comment"] = comment
+
+    # 顯示選單（顯示 pending 狀態的項目）
     pending_reviews = await get_pending_reviews()
 
     if not pending_reviews:
@@ -285,13 +288,19 @@ async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_
         )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "📋 請選擇要標記為需要修改的項目：", reply_markup=reply_markup
-    )
+
+    prompt = "📋 請選擇要標記為需要修改的項目："
+    if comment:
+        prompt += f"\n💬 評語：{comment}"
+
+    await update.message.reply_text(prompt, reply_markup=reply_markup)
 
 
 async def _do_need_fix(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, sponsor_name: str
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    sponsor_name: str,
+    comment: str = None,
 ):
     """執行標記需要修改"""
     # 檢查是否存在
@@ -310,7 +319,7 @@ async def _do_need_fix(
             )
         return False
 
-    success = await update_review_status(sponsor_name, ReviewStatus.NEED_FIX)
+    success = await update_review_status(sponsor_name, ReviewStatus.NEED_FIX, comment)
     if success:
         submitter = review.get("submitter_username", "未知")
         link = review.get("link", "")
@@ -318,7 +327,12 @@ async def _do_need_fix(
         # 立刻通知提交者
         if submitter != "未知" and update.effective_chat:
             await notify_submitter_need_fix(
-                context.bot, update.effective_chat.id, sponsor_name, submitter, link
+                context.bot,
+                update.effective_chat.id,
+                sponsor_name,
+                submitter,
+                link,
+                comment,
             )
         return True
     return False
@@ -332,10 +346,16 @@ async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 解析 callback_data
     sponsor_name = query.data.replace("needfix:", "")
 
-    success = await _do_need_fix(update, context, sponsor_name)
+    # 取得評語（從 user_data）
+    comment = context.user_data.pop("need_fix_comment", None)
+
+    success = await _do_need_fix(update, context, sponsor_name, comment)
 
     if success:
-        await query.edit_message_text(f"🔧 「{sponsor_name}」已標記為需要修改")
+        msg = f"🔧 「{sponsor_name}」已標記為需要修改"
+        if comment:
+            msg += f"\n💬 評語：{comment}"
+        await query.edit_message_text(msg)
     else:
         await query.edit_message_text(
             f"❌ 標記「{sponsor_name}」失敗（可能已審核或不存在）"

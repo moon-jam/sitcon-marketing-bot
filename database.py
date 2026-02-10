@@ -32,11 +32,18 @@ async def init_db():
                 status TEXT NOT NULL DEFAULT 'pending',
                 submitter_id INTEGER,
                 submitter_username TEXT,
+                comment TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """
         )
+
+        # 檢查並新增 comment 欄位（相容舊資料庫）
+        try:
+            await db.execute("SELECT comment FROM reviews LIMIT 1")
+        except aiosqlite.OperationalError:
+            await db.execute("ALTER TABLE reviews ADD COLUMN comment TEXT")
 
         # Reviewers 表
         await db.execute(
@@ -94,17 +101,40 @@ async def get_review_by_name(sponsor_name: str) -> Optional[dict]:
             return dict(row) if row else None
 
 
-async def update_review_status(sponsor_name: str, status: ReviewStatus) -> bool:
-    """更新 review 狀態，回傳是否成功"""
+async def update_review_status(
+    sponsor_name: str, status: ReviewStatus, comment: str = None
+) -> bool:
+    """更新 review 狀態（可選帶評語），回傳是否成功"""
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            UPDATE reviews 
-            SET status = ?, updated_at = ? 
-            WHERE sponsor_name = ? AND status != ?
-            """,
-            (status.value, datetime.now(), sponsor_name, ReviewStatus.APPROVED.value),
-        )
+        if comment is not None:
+            cursor = await db.execute(
+                """
+                UPDATE reviews 
+                SET status = ?, comment = ?, updated_at = ? 
+                WHERE sponsor_name = ? AND status != ?
+                """,
+                (
+                    status.value,
+                    comment,
+                    datetime.now(),
+                    sponsor_name,
+                    ReviewStatus.APPROVED.value,
+                ),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                UPDATE reviews 
+                SET status = ?, updated_at = ? 
+                WHERE sponsor_name = ? AND status != ?
+                """,
+                (
+                    status.value,
+                    datetime.now(),
+                    sponsor_name,
+                    ReviewStatus.APPROVED.value,
+                ),
+            )
         await db.commit()
         return cursor.rowcount > 0
 

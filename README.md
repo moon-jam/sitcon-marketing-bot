@@ -8,7 +8,7 @@ SITCON 行銷組 Review 管理機器人 - 用於追蹤信件/文件的審核狀�
 
 - `/review <名稱> : <連結>` - 新增 review 請求（支援批量，每行一個）
 - `/review_approve` - 選擇待審核項目（並通知提交者）
-- `/review_need_fix` - 選擇標記需要修改項目（並立刻通知提交者）
+- `/review_need_fix [評語]` - 選擇標記需要修改項目（可附帶評語，並立刻通知提交者）
 - `/review_again` - 重新送審（待修改項目修改完成後）
 - `/review_list` - 列出所有待處理項目
 - `/review_notify` - 手動觸發通知 reviewers 審核

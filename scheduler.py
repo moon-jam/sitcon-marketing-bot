@@ -104,9 +104,11 @@ async def send_need_fix_notification(bot: Bot, chat_ids: list[int]) -> bool:
         lines.append(f"@{submitter} 請修改：")
         for r in reviews:
             lines.append(f"  • {r['sponsor_name']} - {r['link']}")
+            if r.get("comment"):
+                lines.append(f"    💬 {r['comment']}")
         lines.append("")
 
-    lines.append("修改完成後請重新提交 /review")
+    lines.append("修改完成後請使用 /review_again 重新送審")
 
     message = "\n".join(lines)
 
@@ -136,15 +138,22 @@ async def notify_submitter_approved(
 
 
 async def notify_submitter_need_fix(
-    bot: Bot, chat_id: int, sponsor_name: str, submitter_username: str, link: str
+    bot: Bot,
+    chat_id: int,
+    sponsor_name: str,
+    submitter_username: str,
+    link: str,
+    comment: str = None,
 ):
     """通知提交者需要修改"""
     message = (
         f"🔧 修改通知\n\n"
         f"@{submitter_username} 您提交的「{sponsor_name}」需要修改\n"
-        f"連結：{link}\n\n"
-        f"修改完成後請重新提交 /review"
+        f"連結：{link}"
     )
+    if comment:
+        message += f"\n💬 評語：{comment}"
+    message += "\n\n修改完成後請使用 /review_again 重新送審"
     try:
         await bot.send_message(chat_id=chat_id, text=message)
     except Exception as e:

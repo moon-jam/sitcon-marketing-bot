@@ -4,7 +4,7 @@ SITCON Marketing Bot - Review 管理機器人
 功能：
 - /review：新增 review 請求（支援批量）
 - /review_approve：選擇待審核項目審核通過（並通知提交者）
-- /review_need_fix：選擇標記需要修改（並立刻通知提交者）
+- /review_need_fix [評語]：選擇標記需要修改（可附帶評語，並立刻通知提交者）
 - /review_again：重新送審（待修改項目修改完成後）
 - /review_list：列出所有待處理項目
 - /review_notify：手動觸發通知 reviewers
@@ -64,7 +64,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📝 Review 管理：\n"
         "• /review <名稱> : <連結> - 新增 review 請求\n"
         "• /review_approve - 選擇審核通過項目\n"
-        "• /review_need_fix - 選擇標記需要修改項目\n"
+        "• /review_need_fix [評語] - 選擇標記需要修改項目\n"
         "• /review_again - 重新送審（待修改項目修改完成）\n"
         "• /review_list - 列出待處理項目\n"
         "• /review_notify - 手動通知 reviewers\n\n"
@@ -87,7 +87,7 @@ async def post_init(application: Application) -> None:
     commands = [
         BotCommand("review", "新增 review 請求（名稱 : 連結）"),
         BotCommand("review_approve", "選擇審核通過項目"),
-        BotCommand("review_need_fix", "選擇標記需要修改項目"),
+        BotCommand("review_need_fix", "標記需要修改（可附評語）"),
         BotCommand("review_again", "重新送審（修改完成）"),
         BotCommand("review_list", "列出待處理項目"),
         BotCommand("review_notify", "手動通知 reviewers"),
