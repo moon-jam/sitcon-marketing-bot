@@ -16,6 +16,7 @@ from database import (
     get_pending_reviews,
     get_need_fix_reviews,
     get_all_active_reviews,
+    get_all_reviewers,
     ReviewStatus,
 )
 from scheduler import (
@@ -85,7 +86,7 @@ def format_review_list(reviews: list[dict], title: str) -> str:
 
         lines.append(f"{status_emoji} {r['sponsor_name']}")
         lines.append(f"   連結：{r['link']}")
-        lines.append(f"   提交者：@{r['submitter_username']}")
+        lines.append(f"   提交者：{r['submitter_username']}")
         if r.get("comment"):
             lines.append(f"   💬 評語：{r['comment']}")
         lines.append("")
@@ -141,7 +142,14 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response_parts = []
 
     if success_items:
-        response_parts.append("📝 已新增 Review 請求：\n" + "\n".join(success_items))
+        # 取得所有 reviewer 並標記
+        reviewers = await get_all_reviewers()
+        reviewer_tags = " ".join([f"@{r}" for r in reviewers])
+
+        msg = "📝 已新增 Review 請求：\n" + "\n".join(success_items)
+        if reviewer_tags:
+            msg += f"\n\n🔔 呼叫審核者：{reviewer_tags}"
+        response_parts.append(msg)
 
     if failed_items:
         response_parts.append(
