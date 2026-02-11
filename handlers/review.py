@@ -2,10 +2,12 @@
 Review 相關指令處理器
 """
 
-import os
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import (
+    ContextTypes,
+    CallbackQueryHandler,
+)
 
 from database import (
     add_review,
@@ -21,23 +23,11 @@ from scheduler import (
     notify_submitter_approved,
     notify_submitter_need_fix,
 )
-
-
-def get_allowed_chat_ids() -> list[int]:
-    """從環境變數取得允許的聊天室 ID 清單"""
-    chat_ids_str = os.getenv("ALLOWED_CHAT_IDS", "")
-    if not chat_ids_str:
-        return []
-
-    chat_ids = []
-    for id_str in chat_ids_str.split(","):
-        id_str = id_str.strip()
-        if id_str:
-            try:
-                chat_ids.append(int(id_str))
-            except ValueError:
-                pass
-    return chat_ids
+from handlers.utils import (
+    get_allowed_chat_ids,
+    extract_command_args,
+    UnifiedCommandHandler,
+)
 
 
 def is_valid_url(text: str) -> bool:
@@ -114,14 +104,7 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 取得指令後的所有文字
-    text = update.message.text
-
-    # 移除 /review 指令本身
-    if text.startswith("/review@"):
-        # 處理 /review@botname 的情況
-        text = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ""
-    elif text.startswith("/review"):
-        text = text[7:].strip()
+    text = extract_command_args(update.message, "review")
 
     if not text:
         await update.message.reply_text(
@@ -177,9 +160,13 @@ async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_T
     if not update.message:
         return
 
+    # 取得參數
+    args_text = extract_command_args(update.message, "review_approve")
+    args = args_text.split() if args_text else []
+
     # 如果有提供參數，直接審核該項目
-    if context.args:
-        sponsor_name = " ".join(context.args)
+    if args:
+        sponsor_name = " ".join(args)
         await _do_approve(update, context, sponsor_name)
         return
 
@@ -262,7 +249,7 @@ async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_
         return
 
     # 解析評語（如果有的話）
-    comment = " ".join(context.args) if context.args else None
+    comment = extract_command_args(update.message, "review_need_fix")
 
     # 儲存評語到 user_data（給 callback 使用）
     if comment:
@@ -463,22 +450,17 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_review_handlers(app, chat_filter=None):
     """註冊 review 相關的指令處理器"""
-    app.add_handler(CommandHandler("review", review_command, filters=chat_filter))
-    app.add_handler(
-        CommandHandler("review_approve", review_approve_command, filters=chat_filter)
-    )
-    app.add_handler(
-        CommandHandler("review_need_fix", review_need_fix_command, filters=chat_filter)
-    )
-    app.add_handler(
-        CommandHandler("review_list", review_list_command, filters=chat_filter)
-    )
-    app.add_handler(
-        CommandHandler("review_notify", review_notify_command, filters=chat_filter)
-    )
-    app.add_handler(
-        CommandHandler("review_again", review_again_command, filters=chat_filter)
-    )
+    handlers = [
+        ("review", review_command),
+        ("review_approve", review_approve_command),
+        ("review_need_fix", review_need_fix_command),
+        ("review_list", review_list_command),
+        ("review_notify", review_notify_command),
+        ("review_again", review_again_command),
+    ]
+
+    for cmd, callback in handlers:
+        app.add_handler(UnifiedCommandHandler(cmd, callback, filters=chat_filter))
 
     # Callback handlers for inline keyboards
     app.add_handler(CallbackQueryHandler(approve_callback, pattern=r"^approve:"))

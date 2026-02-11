@@ -19,10 +19,11 @@ import sys
 
 from dotenv import load_dotenv
 from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, filters
+from telegram.ext import Application, ContextTypes, filters
 
 from database import init_db
 from handlers import register_review_handlers, register_reviewer_handlers
+from handlers.utils import UnifiedCommandHandler, get_allowed_chat_ids
 from scheduler import setup_scheduler
 
 # 載入環境變數
@@ -34,24 +35,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-
-
-def get_allowed_chat_ids() -> list[int]:
-    """從環境變數取得允許的聊天室 ID 清單"""
-    chat_ids_str = os.getenv("ALLOWED_CHAT_IDS", "")
-    if not chat_ids_str:
-        return []
-
-    chat_ids = []
-    for id_str in chat_ids_str.split(","):
-        id_str = id_str.strip()
-        if id_str:
-            try:
-                chat_ids.append(int(id_str))
-            except ValueError:
-                logger.warning(f"Invalid chat ID: {id_str}")
-
-    return chat_ids
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,9 +104,9 @@ def main():
     # 建立聊天室過濾器
     chat_filter = filters.Chat(allowed_chat_ids) if allowed_chat_ids else None
 
-    # 註冊基本指令（受聊天室限制）
-    app.add_handler(CommandHandler("start", start_command, filters=chat_filter))
-    app.add_handler(CommandHandler("help", help_command, filters=chat_filter))
+    # 註冊基本指令（使用 UnifiedCommandHandler 支援超連結指令）
+    app.add_handler(UnifiedCommandHandler("start", start_command, filters=chat_filter))
+    app.add_handler(UnifiedCommandHandler("help", help_command, filters=chat_filter))
 
     # 註冊 review 和 reviewer 相關指令
     register_review_handlers(app, chat_filter)

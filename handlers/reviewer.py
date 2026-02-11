@@ -3,9 +3,10 @@ Reviewer 管理指令處理器
 """
 
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram.ext import ContextTypes
 
 from database import add_reviewer, remove_reviewer, get_all_reviewers
+from handlers.utils import UnifiedCommandHandler, extract_command_args
 
 
 async def reviewer_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -13,13 +14,17 @@ async def reviewer_add_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.message:
         return
 
-    if not context.args:
+    # 取得參數
+    args_text = extract_command_args(update.message, "reviewer_add")
+    args = args_text.split() if args_text else []
+
+    if not args:
         await update.message.reply_text(
             "❌ 請提供 username\n" "使用方式：/reviewer_add <username>"
         )
         return
 
-    username = context.args[0].lstrip("@")
+    username = args[0].lstrip("@")
     success = await add_reviewer(username)
 
     if success:
@@ -33,13 +38,17 @@ async def reviewer_remove_command(update: Update, context: ContextTypes.DEFAULT_
     if not update.message:
         return
 
-    if not context.args:
+    # 取得參數
+    args_text = extract_command_args(update.message, "reviewer_remove")
+    args = args_text.split() if args_text else []
+
+    if not args:
         await update.message.reply_text(
             "❌ 請提供 username\n" "使用方式：/reviewer_remove <username>"
         )
         return
 
-    username = context.args[0].lstrip("@")
+    username = args[0].lstrip("@")
     success = await remove_reviewer(username)
 
     if success:
@@ -69,12 +78,11 @@ async def reviewer_list_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 def register_reviewer_handlers(app, chat_filter=None):
     """註冊 reviewer 相關的指令處理器"""
-    app.add_handler(
-        CommandHandler("reviewer_add", reviewer_add_command, filters=chat_filter)
-    )
-    app.add_handler(
-        CommandHandler("reviewer_remove", reviewer_remove_command, filters=chat_filter)
-    )
-    app.add_handler(
-        CommandHandler("reviewer_list", reviewer_list_command, filters=chat_filter)
-    )
+    handlers = [
+        ("reviewer_add", reviewer_add_command),
+        ("reviewer_remove", reviewer_remove_command),
+        ("reviewer_list", reviewer_list_command),
+    ]
+
+    for cmd, callback in handlers:
+        app.add_handler(UnifiedCommandHandler(cmd, callback, filters=chat_filter))
