@@ -74,8 +74,8 @@ def parse_review_line(line: str) -> tuple[str, str] | None:
     if not sponsor_name or not link:
         return None
 
-    if not is_valid_url(link):
-        return None
+    # if not is_valid_url(link):
+    #     return None
 
     return (sponsor_name, link)
 
