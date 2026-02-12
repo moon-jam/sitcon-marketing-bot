@@ -50,14 +50,20 @@ def is_valid_url(text: str) -> bool:
 def parse_review_line(line: str) -> tuple[str, str] | None:
     """
     解析單行 review 輸入
-    格式：贊助商/文件名稱 : 連結
+    格式：贊助商/文件名稱 : 連結（冒號前後可不加空格）
     回傳 (sponsor_name, link) 或 None（格式錯誤）
     """
-    # 使用 " : " 作為分隔符（前後有空格）
-    if " : " not in line:
-        return None
+    # 優先使用 " : " 作為分隔符（前後有空格）
+    if " : " in line:
+        parts = line.split(" : ", 1)
+    else:
+        # 容許冒號前後沒空格，但要避免拆到 URL 中的 "://"
+        # 使用 regex 匹配第一個不屬於 :// 的冒號
+        match = re.match(r'^(.+?)(?<!/)(?<!https?):(.*)', line)
+        if not match:
+            return None
+        parts = [match.group(1), match.group(2)]
 
-    parts = line.split(" : ", 1)
     if len(parts) != 2:
         return None
 
