@@ -45,6 +45,52 @@ async def init_db():
         except aiosqlite.OperationalError:
             await db.execute("ALTER TABLE reviews ADD COLUMN comment TEXT")
 
+        # 檢查並新增 gitlab_issue_iid 欄位
+        try:
+            await db.execute("SELECT gitlab_issue_iid FROM reviews LIMIT 1")
+        except aiosqlite.OperationalError:
+            await db.execute("ALTER TABLE reviews ADD COLUMN gitlab_issue_iid INTEGER")
+
+        # 檢查並新增 gitlab_issue_url 欄位
+        try:
+            await db.execute("SELECT gitlab_issue_url FROM reviews LIMIT 1")
+        except aiosqlite.OperationalError:
+            await db.execute("ALTER TABLE reviews ADD COLUMN gitlab_issue_url TEXT")
+
+        # Reminders 表
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                content TEXT,
+                assignee_tg_id INTEGER,
+                assignee_username TEXT,
+                gitlab_issue_iid INTEGER,
+                gitlab_issue_url TEXT,
+                timing_type TEXT, -- 'once' or 'periodic'
+                interval_minutes INTEGER,
+                next_remind_at TIMESTAMP,
+                status TEXT DEFAULT 'pending', -- 'pending' or 'done'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
+        # 檢查並新增 interval_minutes 與 next_remind_at 欄位
+        try:
+            await db.execute("SELECT interval_minutes FROM reminders LIMIT 1")
+        except aiosqlite.OperationalError:
+            await db.execute("ALTER TABLE reminders ADD COLUMN interval_minutes INTEGER")
+            await db.execute("ALTER TABLE reminders ADD COLUMN next_remind_at TIMESTAMP")
+
+        # 檢查並新增 gitlab_issue_url 欄位（對應舊的 reminders 表）
+        try:
+            await db.execute("SELECT gitlab_issue_url FROM reminders LIMIT 1")
+        except aiosqlite.OperationalError:
+            await db.execute("ALTER TABLE reminders ADD COLUMN gitlab_issue_url TEXT")
+
         # Reviewers 表
         await db.execute(
             """
@@ -63,14 +109,19 @@ async def init_db():
 
 
 async def add_review(
-    sponsor_name: str, link: str, submitter_id: int, submitter_username: str
+    sponsor_name: str, 
+    link: str, 
+    submitter_id: int, 
+    submitter_username: str,
+    gitlab_issue_iid: Optional[int] = None,
+    gitlab_issue_url: Optional[str] = None
 ) -> int:
     """新增一筆 review 請求，回傳新增的 ID"""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
-            INSERT INTO reviews (sponsor_name, link, status, submitter_id, submitter_username)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO reviews (sponsor_name, link, status, submitter_id, submitter_username, gitlab_issue_iid, gitlab_issue_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sponsor_name,
@@ -78,6 +129,8 @@ async def add_review(
                 ReviewStatus.PENDING.value,
                 submitter_id,
                 submitter_username,
+                gitlab_issue_iid,
+                gitlab_issue_url,
             ),
         )
         await db.commit()
@@ -212,3 +265,113 @@ async def get_all_reviewers() -> list[str]:
         async with db.execute("SELECT username FROM reviewers") as cursor:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
+
+
+# ==================== Reminders 操作 ====================
+
+
+async def add_reminder(
+    title: str,
+    content: str,
+    assignee_tg_id: Optional[int],
+    assignee_username: str,
+    gitlab_issue_iid: Optional[int] = None,
+    gitlab_issue_url: Optional[str] = None,
+    timing_type: str = "once",
+    interval_minutes: Optional[int] = None,
+    next_remind_at: Optional[datetime] = None,
+) -> int:
+    """新增一筆提醒，回傳新增的 ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO reminders (
+                title, content, assignee_tg_id, assignee_username, 
+                gitlab_issue_iid, gitlab_issue_url, timing_type, 
+                interval_minutes, next_remind_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title,
+                content,
+                assignee_tg_id,
+                assignee_username,
+                gitlab_issue_iid,
+                gitlab_issue_url,
+                timing_type,
+                interval_minutes,
+                next_remind_at,
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_pending_reminders_by_user(tg_id: int) -> list[dict]:
+    """取得特定使用者所有待處理的提醒（透過 TG ID）"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM reminders WHERE assignee_tg_id = ? AND status = 'pending' ORDER BY created_at DESC",
+            (tg_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def get_pending_reminders_by_username(username: str) -> list[dict]:
+    """取得特定使用者所有待處理的提醒（透過 username）"""
+    username = username.lstrip("@")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM reminders WHERE assignee_username = ? AND status = 'pending' ORDER BY created_at DESC",
+            (username,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def update_reminder_status(reminder_id: int, status: str) -> bool:
+    """更新提醒狀態"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE reminders SET status = ?, updated_at = ? WHERE id = ?",
+            (status, datetime.now(), reminder_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_reminder_by_id(reminder_id: int) -> Optional[dict]:
+    """根據 ID 取得提醒"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM reminders WHERE id = ?", (reminder_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def get_active_reminders() -> list[dict]:
+    """取得所有進行中且有設定提醒時間的提醒"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM reminders WHERE status = 'pending' AND next_remind_at IS NOT NULL"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def update_next_remind_at(reminder_id: int, next_at: Optional[datetime]) -> bool:
+    """更新下次提醒時間"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE reminders SET next_remind_at = ?, updated_at = ? WHERE id = ?",
+            (next_at, datetime.now(), reminder_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0

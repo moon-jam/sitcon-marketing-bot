@@ -13,7 +13,14 @@ from zoneinfo import ZoneInfo
 from telegram import Bot
 from telegram.ext import Application
 
-from database import get_pending_reviews, get_need_fix_reviews, get_all_reviewers
+from database import (
+    get_pending_reviews,
+    get_need_fix_reviews,
+    get_all_reviewers,
+    get_active_reminders,
+    update_next_remind_at,
+    get_reminder_by_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +109,13 @@ async def send_pending_review_notification(bot: Bot, chat_ids: list[int]) -> boo
 
     # 建立提醒訊息
     reviewer_mentions = " ".join([f"@{html.escape(u)}" for u in reviewers])
-    review_lines = [
-        f"• {html.escape(r['sponsor_name'])} - {html.escape(r['link'])}"
-        for r in pending_reviews
-    ]
+    review_lines = []
+    for r in pending_reviews:
+        line = f"• {html.escape(r['sponsor_name'])} - {html.escape(r['link'])}"
+        if r.get("gitlab_issue_url"):
+            line += f" (<a href=\"{r['gitlab_issue_url']}\">GitLab #{r['gitlab_issue_iid']}</a>)"
+        review_lines.append(line)
+    
     review_list = "\n".join(review_lines)
 
     message = (
@@ -150,7 +160,10 @@ async def send_need_fix_notification(bot: Bot, chat_ids: list[int]) -> bool:
     for submitter, reviews in by_submitter.items():
         detail_lines.append(f"@{html.escape(submitter)} 請修改：")
         for r in reviews:
-            detail_lines.append(f"  • {html.escape(r['sponsor_name'])} - {html.escape(r['link'])}")
+            line = f"  • {html.escape(r['sponsor_name'])} - {html.escape(r['link'])}"
+            if r.get("gitlab_issue_url"):
+                line += f" (<a href=\"{r['gitlab_issue_url']}\">GitLab #{r['gitlab_issue_iid']}</a>)"
+            detail_lines.append(line)
             if r.get("comment"):
                 detail_lines.append(f"    💬 {html.escape(r['comment'])}")
         detail_lines.append("")
@@ -194,18 +207,23 @@ async def notify_submitter_need_fix(
     submitter_username: str,
     link: str,
     comment: str = None,
+    gitlab_issue_url: str = None,
+    gitlab_issue_iid: int = None,
 ):
     """通知提交者需要修改"""
     message = (
         f"🔧 修改通知\n\n"
-        f"@{submitter_username} 您提交的「{sponsor_name}」需要修改\n"
-        f"連結：{link}"
+        f"@{html.escape(submitter_username)} 您提交的「{html.escape(sponsor_name)}」需要修改\n"
+        f"連結：{html.escape(link)}"
     )
+    if gitlab_issue_url:
+        message += f"\nGitLab：<a href=\"{gitlab_issue_url}\">#{gitlab_issue_iid}</a>"
+    
     if comment:
-        message += f"\n💬 評語：{comment}"
+        message += f"\n💬 評語：{html.escape(comment)}"
     message += "\n\n修改完成後請使用 /review_again 重新送審"
     try:
-        await bot.send_message(chat_id=chat_id, text=message)
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Failed to notify submitter: {e}")
 
@@ -269,3 +287,91 @@ def setup_scheduler(app: Application, chat_ids: list[int]):
     logger.info(
         f"Scheduler setup complete. Reminders will be sent to chat IDs: {chat_ids}"
     )
+
+    # 載入現有的個人提醒
+    import asyncio
+
+    asyncio.create_task(load_custom_reminders(app))
+
+
+async def load_custom_reminders(app: Application):
+    """從資料庫載入並設定所有待處理的個人提醒"""
+    reminders = await get_active_reminders()
+    for r in reminders:
+        schedule_reminder_job(app, r)
+    logger.info(f"Loaded {len(reminders)} custom reminders from database")
+
+
+def schedule_reminder_job(app: Application, reminder: dict):
+    """設定單個個人提醒的 Job"""
+    job_queue = app.job_queue
+    if not job_queue:
+        return
+
+    reminder_id = reminder["id"]
+    next_at = reminder["next_remind_at"]
+
+    # 轉換 next_at 字串為 datetime (如果從 sqlite 讀出來是字串)
+    if isinstance(next_at, str):
+        try:
+            next_at = datetime.fromisoformat(next_at)
+        except ValueError:
+            logger.error(f"Invalid next_remind_at format for reminder {reminder_id}: {next_at}")
+            return
+
+    if not next_at:
+        return
+
+    # 如果已經過期且是一次性的，就不排程
+    now = datetime.now()
+    if next_at < now and reminder["timing_type"] == "once":
+        return
+
+    # 為了解決時區問題，如果 next_at 沒有時區，加上本地時區
+    if next_at.tzinfo is None:
+        next_at = next_at.replace(tzinfo=TZ)
+
+    job_queue.run_once(
+        execute_reminder_job,
+        when=next_at,
+        data=reminder_id,
+        name=f"remind_{reminder_id}",
+    )
+
+
+async def execute_reminder_job(context):
+    """執行個人提醒 Job：發送通知並更新下次時間"""
+    reminder_id = context.job.data
+    reminder = await get_reminder_by_id(reminder_id)
+
+    if not reminder or reminder["status"] != "pending":
+        return
+
+    # 發送通知
+    username = reminder["assignee_username"]
+    content = reminder["content"]
+    msg = f"🔔 提醒 @{html.escape(username)}\n\n📝 內容：{html.escape(content)}"
+    if reminder.get("gitlab_issue_url"):
+        msg += f"\n🔗 GitLab: <a href=\"{reminder['gitlab_issue_url']}\">#{reminder['gitlab_issue_iid']}</a>"
+
+    from handlers.utils import get_allowed_chat_ids
+    chat_ids = get_allowed_chat_ids()
+    for chat_id in chat_ids:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Failed to send custom reminder {reminder_id} to {chat_id}: {e}")
+
+    # 如果是週期性的，更新下次時間並重新排程
+    if reminder["timing_type"] == "periodic" and reminder["interval_minutes"]:
+        from datetime import timedelta
+
+        next_at = datetime.now() + timedelta(minutes=reminder["interval_minutes"])
+        await update_next_remind_at(reminder_id, next_at)
+        
+        # 重新排程
+        reminder["next_remind_at"] = next_at
+        schedule_reminder_job(context.application, reminder)
+    else:
+        # 一次性的提醒，發送後就不再有 next_remind_at (但 status 還是 pending 直到 /remind_done)
+        await update_next_remind_at(reminder_id, None)

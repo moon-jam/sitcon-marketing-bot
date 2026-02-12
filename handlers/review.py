@@ -20,6 +20,7 @@ from database import (
     get_all_reviewers,
     ReviewStatus,
 )
+from handlers.gitlab_client import gitlab_client
 from scheduler import (
     send_pending_review_notification,
     notify_submitter_approved,
@@ -88,6 +89,8 @@ def format_review_list(reviews: list[dict], title: str) -> str:
 
         lines.append(f"{status_emoji} {html.escape(r['sponsor_name'])}")
         lines.append(f"   連結：{html.escape(r['link'])}")
+        if r.get("gitlab_issue_url"):
+            lines.append(f"   GitLab：<a href=\"{r['gitlab_issue_url']}\">#{r['gitlab_issue_iid']}</a>")
         lines.append(f"   提交者：{html.escape(r['submitter_username'])}")
         if r.get("comment"):
             lines.append(f"   💬 評語：{html.escape(r['comment'])}")
@@ -136,8 +139,42 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed = parse_review_line(line)
         if parsed:
             sponsor_name, link = parsed
-            await add_review(sponsor_name, link, submitter_id, submitter_username)
-            success_items.append(f"✅ {html.escape(sponsor_name)}")
+
+            # GitLab 開卡
+            gitlab_issue_iid = None
+            gitlab_issue_url = None
+            try:
+                # 嘗試從提交者名稱映射 GitLab ID 與 Username
+                assignee_id = await gitlab_client.get_gitlab_user_id(submitter_username)
+                gitlab_user = await gitlab_client.get_gitlab_username(submitter_username)
+
+                # 如果有對應的 GitLab 使用者，則使用 @ 標記
+                tag_str = f"@{gitlab_user}" if gitlab_user else f"@{submitter_username} (Telegram)"
+
+                issue_title = f"[Review] {sponsor_name}"
+                issue_desc = f"提交者：{tag_str}\\\n連結：{link}"
+                labels = ["Status::Review", "Category::Task"]
+
+                issue = await gitlab_client.create_issue(
+                    title=issue_title,
+                    description=issue_desc,
+                    assignee_id=assignee_id,
+                    labels=labels
+                )
+                if issue:
+                    gitlab_issue_iid = issue.get("iid")
+                    gitlab_issue_url = issue.get("web_url")
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"GitLab integration failed: {e}")
+
+            await add_review(sponsor_name, link, submitter_id, submitter_username, gitlab_issue_iid, gitlab_issue_url)
+            success_msg = f"✅ {html.escape(sponsor_name)}"
+            if gitlab_issue_url:
+                success_msg += f" (<a href=\"{gitlab_issue_url}\">GitLab Issue: #{gitlab_issue_iid}</a>)"
+            elif gitlab_issue_iid:
+                success_msg += f" (GitLab Issue: #{gitlab_issue_iid})"
+            success_items.append(success_msg)
         else:
             failed_items.append(f"❌ {html.escape(line)}")
 
@@ -226,6 +263,14 @@ async def _do_approve(
 
     success = await update_review_status(sponsor_name, ReviewStatus.APPROVED)
     if success:
+        # 關閉 GitLab Issue
+        if review.get("gitlab_issue_iid"):
+            try:
+                await gitlab_client.close_issue(review["gitlab_issue_iid"])
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to close GitLab issue: {e}")
+
         # 通知提交者
         submitter = review.get("submitter_username", "")
         if submitter and update.effective_chat:
@@ -325,6 +370,8 @@ async def _do_need_fix(
     if success:
         submitter = review.get("submitter_username", "未知")
         link = review.get("link", "")
+        gitlab_url = review.get("gitlab_issue_url")
+        gitlab_iid = review.get("gitlab_issue_iid")
 
         # 立刻通知提交者
         if submitter != "未知" and update.effective_chat:
@@ -335,6 +382,8 @@ async def _do_need_fix(
                 submitter,
                 link,
                 comment,
+                gitlab_url,
+                gitlab_iid,
             )
         return True
     return False

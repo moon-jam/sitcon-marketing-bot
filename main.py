@@ -18,16 +18,17 @@ import os
 import sys
 
 from dotenv import load_dotenv
+
+# 載入環境變數（必須在匯入 handlers 之前）
+load_dotenv()
+
 from telegram import BotCommand, Update
 from telegram.ext import Application, ContextTypes, filters
 
 from database import init_db
-from handlers import register_review_handlers, register_reviewer_handlers
+from handlers import register_review_handlers, register_reviewer_handlers, register_reminder_handlers
 from handlers.utils import UnifiedCommandHandler, get_allowed_chat_ids
 from scheduler import setup_scheduler
-
-# 載入環境變數
-load_dotenv()
 
 # 設定 logging
 logging.basicConfig(
@@ -55,6 +56,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /reviewer_add <username> - 新增 reviewer\n"
         "• /reviewer_remove <username> - 移除 reviewer\n"
         "• /reviewer_list - 列出 reviewers\n\n"
+        "⏰ 提醒與 GitLab 開卡：\n"
+        "• /remind @user <內容> - 設定提醒並同步在 GitLab 開卡\n"
+        "• /remind_list - 列出自己的待處理提醒\n"
+        "• /remind_done <ID> - 標記提醒為完成（會自動關閉 GitLab Issue）\n\n"
         "⏰ 提醒：我會依照設定週期自動通知 reviewers\n"
         "💡 提示：可以批量新增 review，每行一個"
     )
@@ -77,6 +82,9 @@ async def post_init(application: Application) -> None:
         BotCommand("reviewer_add", "新增 reviewer"),
         BotCommand("reviewer_remove", "移除 reviewer"),
         BotCommand("reviewer_list", "列出 reviewers"),
+        BotCommand("remind", "設定提醒並同步開卡 (@user 內容)"),
+        BotCommand("remind_list", "列出我的待處理提醒"),
+        BotCommand("remind_done", "標記提醒為完成 (ID)"),
         BotCommand("help", "顯示使用說明"),
     ]
     await application.bot.set_my_commands(commands)
@@ -111,6 +119,7 @@ def main():
     # 註冊 review 和 reviewer 相關指令
     register_review_handlers(app, chat_filter)
     register_reviewer_handlers(app, chat_filter)
+    register_reminder_handlers(app, chat_filter)
 
     # 初始化資料庫
     import asyncio

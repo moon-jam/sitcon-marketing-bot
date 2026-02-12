@@ -1,5 +1,6 @@
 # Environment
 .env
+telegramID2gitlabID.json
 
 # Python
 __pycache__/
