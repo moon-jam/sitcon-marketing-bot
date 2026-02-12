@@ -162,8 +162,8 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
         issue_title = f"[Remind] {content}"
         issue_desc = (
-            f"提醒對象：{tag_str}\n"
-            f"預定時間：{time_desc}\n"
+            f"提醒對象：{tag_str}\\\n"
+            f"預定時間：{time_desc}\\\n"
             f"內容：{content}"
         )
         labels = ["Status::Inbox", "Category::Task"]
