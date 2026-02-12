@@ -289,9 +289,13 @@ def setup_scheduler(app: Application, chat_ids: list[int]):
     )
 
     # 載入現有的個人提醒
-    import asyncio
-
-    asyncio.create_task(load_custom_reminders(app))
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        loop.create_task(load_custom_reminders(app))
+    except RuntimeError:
+        # 如果真的沒 loop (不應發生在 post_init)，則回退
+        logger.warning("No running loop found in setup_scheduler, reminder loading may be delayed")
 
 
 async def load_custom_reminders(app: Application):

@@ -13,7 +13,6 @@ from database import (
     get_pending_reminders_by_username,
     update_reminder_status,
     get_reminder_by_id,
-    get_reminder_by_name, # 注意：這裡可能需要修正，database.py 沒有 get_reminder_by_name
 )
 # 修正：database.py 確實沒有 get_reminder_by_name，但我們可以用 id。
 

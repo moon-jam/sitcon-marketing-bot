@@ -90,6 +90,13 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(commands)
     logger.info("Bot commands registered")
 
+    # 設定排程提醒（在事件迴圈啟動後執行）
+    allowed_chat_ids = get_allowed_chat_ids()
+    if allowed_chat_ids:
+        setup_scheduler(application, allowed_chat_ids)
+    else:
+        logger.warning("Scheduled reminders disabled (no ALLOWED_CHAT_IDS configured)")
+
 
 def main():
     """主程式進入點"""
@@ -126,12 +133,6 @@ def main():
 
     asyncio.get_event_loop().run_until_complete(init_db())
     logger.info("Database initialized")
-
-    # 設定排程提醒（只有設定了聊天室 ID 才啟用）
-    if allowed_chat_ids:
-        setup_scheduler(app, allowed_chat_ids)
-    else:
-        logger.warning("Scheduled reminders disabled (no ALLOWED_CHAT_IDS configured)")
 
     # 啟動 Bot
     logger.info("Starting bot...")
