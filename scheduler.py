@@ -6,7 +6,9 @@
 
 import logging
 import os
+from datetime import datetime, time
 
+from zoneinfo import ZoneInfo
 from telegram import Bot
 from telegram.ext import Application
 
@@ -17,6 +19,9 @@ logger = logging.getLogger(__name__)
 # 預設提醒週期（分鐘）
 DEFAULT_INTERVAL_PENDING = 60  # 每小時
 DEFAULT_INTERVAL_NEED_FIX = 120  # 每兩小時
+
+# 時區
+TZ = ZoneInfo("Asia/Taipei")
 
 
 def get_reminder_interval(env_key: str, default: int) -> int:
@@ -39,6 +44,44 @@ def get_reminder_interval(env_key: str, default: int) -> int:
             f"Invalid interval in {env_key}: {interval_str}, using default {default}"
         )
         return default
+
+
+def _parse_time(time_str: str) -> time | None:
+    """解析 HH:MM 格式時間字串"""
+    try:
+        parts = time_str.strip().split(":")
+        return time(int(parts[0]), int(parts[1]))
+    except (ValueError, IndexError):
+        return None
+
+
+def is_quiet_hours() -> bool:
+    """
+    檢查現在是否在免打擾時段。
+    讀取 QUIET_HOURS_START / QUIET_HOURS_END（HH:MM，Asia/Taipei）。
+    支援跨午夜（例如 22:00-08:00）。
+    """
+    start_str = os.getenv("QUIET_HOURS_START", "")
+    end_str = os.getenv("QUIET_HOURS_END", "")
+    if not start_str or not end_str:
+        return False
+
+    start = _parse_time(start_str)
+    end = _parse_time(end_str)
+    if start is None or end is None:
+        logger.warning(
+            f"Invalid QUIET_HOURS format: start={start_str}, end={end_str}"
+        )
+        return False
+
+    now = datetime.now(TZ).time()
+
+    if start <= end:
+        # 同一天內，例如 09:00-18:00
+        return start <= now < end
+    else:
+        # 跨午夜，例如 22:00-08:00
+        return now >= start or now < end
 
 
 async def send_pending_review_notification(bot: Bot, chat_ids: list[int]) -> bool:
@@ -162,12 +205,18 @@ async def notify_submitter_need_fix(
 
 async def remind_pending_reviews(context):
     """排程任務：提醒 reviewers 審核待處理的 reviews"""
+    if is_quiet_hours():
+        logger.info("Skipping pending review reminder (quiet hours)")
+        return
     chat_ids = context.job.data.get("chat_ids", [])
     await send_pending_review_notification(context.bot, chat_ids)
 
 
 async def remind_need_fix_reviews(context):
     """排程任務：提醒 submitters 修改需要修改的 reviews"""
+    if is_quiet_hours():
+        logger.info("Skipping need-fix review reminder (quiet hours)")
+        return
     chat_ids = context.job.data.get("chat_ids", [])
     await send_need_fix_notification(context.bot, chat_ids)
 
