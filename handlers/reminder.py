@@ -1,6 +1,6 @@
 import html
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -14,8 +14,6 @@ from database import (
     update_reminder_status,
     get_reminder_by_id,
 )
-# 修正：database.py 確實沒有 get_reminder_by_name，但我們可以用 id。
-
 from handlers.gitlab_client import gitlab_client
 from handlers.utils import (
     extract_command_args,
@@ -74,7 +72,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def remind_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """處理提醒類型的 callback，接著顯示時間/週期選單"""
+    """處理提醒類型的 callback"""
     query = update.callback_query
     await query.answer()
 
@@ -82,18 +80,22 @@ async def remind_type_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["remind_timing_type"] = timing_type
 
     if timing_type == "once":
+        # 第一步：選擇日期
         keyboard = [
             [
-                InlineKeyboardButton("1 小時後", callback_data="remind_time:60"),
-                InlineKeyboardButton("4 小時後", callback_data="remind_time:240"),
+                InlineKeyboardButton("今天", callback_data="remind_day:0"),
+                InlineKeyboardButton("明天", callback_data="remind_day:1"),
             ],
             [
-                InlineKeyboardButton("1 天後", callback_data="remind_time:1440"),
-                InlineKeyboardButton("3 天後", callback_data="remind_time:4320"),
+                InlineKeyboardButton("後天", callback_data="remind_day:2"),
+                InlineKeyboardButton("下週一", callback_data="remind_day:mon"),
             ],
         ]
-        text = "請選擇多久後提醒一次 (一次性)："
+        text = "📅 第一步：請選擇提醒日期"
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup)
     else:
+        # 週期性維持原樣
         keyboard = [
             [
                 InlineKeyboardButton("每天 (Daily)", callback_data="remind_time:1440"),
@@ -104,16 +106,57 @@ async def remind_type_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             ],
         ]
         text = "請選擇提醒週期："
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup)
 
+async def remind_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """第二步：選擇具體時段"""
+    query = update.callback_query
+    await query.answer()
+
+    day_code = query.data.replace("remind_day:", "")
+    
+    # 計算日期
+    now = datetime.now(TZ)
+    if day_code == "mon":
+        # 計算到下週一的天數
+        days_ahead = 7 - now.weekday()
+        if days_ahead <= 0: days_ahead += 7
+        target_date = now + timedelta(days=days_ahead)
+    else:
+        target_date = now + timedelta(days=int(day_code))
+    
+    context.user_data["remind_target_date"] = target_date.date().isoformat()
+
+    # 時段選單
+    keyboard = [
+        [
+            InlineKeyboardButton("早上 09:00", callback_data="remind_time:09:00"),
+            InlineKeyboardButton("中午 12:00", callback_data="remind_time:12:00"),
+        ],
+        [
+            InlineKeyboardButton("下午 15:00", callback_data="remind_time:15:00"),
+            InlineKeyboardButton("晚上 18:00", callback_data="remind_time:18:00"),
+        ],
+        [
+            InlineKeyboardButton("深夜 21:00", callback_data="remind_time:21:00"),
+            InlineKeyboardButton("自訂 (1小時後)", callback_data="remind_time:relative_60"),
+        ]
+    ]
+    
+    date_str = target_date.strftime('%Y-%m-%d')
+    day_name = "今天" if day_code == "0" else "明天" if day_code == "1" else "後天" if day_code == "2" else "下週一"
+    text = f"⏰ 第二步：請選擇 {day_name} ({date_str}) 的提醒時間"
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(text, reply_markup=reply_markup)
 
 async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """處理時間/週期選擇，並執行開卡與存檔"""
+    """處理最終時間確認並執行"""
     query = update.callback_query
     await query.answer()
 
-    minutes = int(query.data.replace("remind_time:", ""))
+    time_val = query.data.replace("remind_time:", "")
     timing_type = context.user_data.get("remind_timing_type")
     target_user = context.user_data.pop("remind_target", None)
     content = context.user_data.pop("remind_content", None)
@@ -122,18 +165,35 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("❌ 錯誤：找不到提醒資訊，請重新輸入指令")
         return
 
-    timing_text = "一次性" if timing_type == "once" else "週期性"
-    
-    # 計算下次提醒時間
-    next_at = datetime.now(TZ) + timedelta(minutes=minutes)
-    
+    now = datetime.now(TZ)
+    next_at = None
     time_desc = ""
+
     if timing_type == "once":
-        time_desc = f"{minutes//60} 小時後" if minutes < 1440 else f"{minutes//1440} 天後"
+        if time_val.startswith("relative_"):
+            minutes = int(time_val.replace("relative_", ""))
+            next_at = now + timedelta(minutes=minutes)
+            time_desc = f"{minutes} 分鐘後"
+        else:
+            date_str = context.user_data.pop("remind_target_date")
+            target_date = datetime.fromisoformat(date_str).date()
+            hour, minute = map(int, time_val.split(":"))
+            next_at = datetime.combine(target_date, time(hour, minute)).replace(tzinfo=TZ)
+            
+            # 如果選的是今天但時間已經過了，自動加一天
+            if next_at < now:
+                next_at += timedelta(days=1)
+            
+            time_desc = next_at.strftime('%Y-%m-%d %H:%M')
     else:
+        # 週期性
+        minutes = int(time_val)
+        next_at = now + timedelta(minutes=minutes)
         if minutes == 1440: time_desc = "每天"
         elif minutes == 10080: time_desc = "每週"
         else: time_desc = f"每 {minutes//1440} 天"
+
+    timing_text = "一次性" if timing_type == "once" else "週期性"
 
     # GitLab 開卡
     gitlab_issue_iid = None
@@ -141,7 +201,6 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         assignee_id = await gitlab_client.get_gitlab_user_id(target_user)
         gitlab_user = await gitlab_client.get_gitlab_username(target_user)
-        
         tag_str = f"@{gitlab_user}" if gitlab_user else f"@{target_user} (Telegram)"
 
         issue_title = f"[Remind] {content}"
@@ -167,7 +226,6 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"GitLab integration failed: {e}")
 
     # 存入資料庫
-    from database import add_reminder
     reminder_id = await add_reminder(
         title=content[:50],
         content=content,
@@ -176,7 +234,7 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         gitlab_issue_iid=gitlab_issue_iid,
         gitlab_issue_url=gitlab_issue_url,
         timing_type=timing_type,
-        interval_minutes=minutes if timing_type == "periodic" else None,
+        interval_minutes=int(time_val) if timing_type == "periodic" else None,
         next_remind_at=next_at
     )
 
@@ -187,7 +245,7 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         "assignee_username": target_user,
         "content": content,
         "timing_type": timing_type,
-        "interval_minutes": minutes if timing_type == "periodic" else None,
+        "interval_minutes": int(time_val) if timing_type == "periodic" else None,
         "next_remind_at": next_at,
         "gitlab_issue_url": gitlab_issue_url,
         "gitlab_issue_iid": gitlab_issue_iid,
@@ -195,7 +253,7 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     schedule_reminder_job(context.application, reminder)
 
     msg = f"✅ 已設定 @{target_user} 的{timing_text}提醒！\n"
-    msg += f"⏰ 下次提醒時間：{next_at.strftime('%Y-%m-%d %H:%M')}\n"
+    msg += f"⏰ 提醒時間：{next_at.strftime('%Y-%m-%d %H:%M')}\n"
     if gitlab_issue_url:
         msg += f"<a href=\"{gitlab_issue_url}\">GitLab Issue: #{gitlab_issue_iid}</a>"
     
@@ -209,7 +267,6 @@ async def remind_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.message.from_user
     username = user.username or str(user.id)
 
-    from database import get_pending_reminders_by_username
     reminders = await get_pending_reminders_by_username(username)
 
     if not reminders:
@@ -221,17 +278,14 @@ async def remind_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         timing = "⏳" if r["timing_type"] == "once" else "🔄"
         lines.append(f"{timing} ID: {r['id']} - {html.escape(r['content'])}")
         if r.get("next_remind_at"):
-            # 如果是字串則轉換
             next_at = r["next_remind_at"]
             if isinstance(next_at, str):
                 try:
                     next_at = datetime.fromisoformat(next_at).strftime('%Y-%m-%d %H:%M')
-                except:
-                    pass
+                except: pass
             else:
                 next_at = next_at.strftime('%Y-%m-%d %H:%M')
             lines.append(f"   下次提醒：{next_at}")
-            
         if r.get("gitlab_issue_url"):
             lines.append(f"   GitLab: <a href=\"{r['gitlab_issue_url']}\">#{r['gitlab_issue_iid']}</a>")
     
@@ -255,25 +309,17 @@ async def remind_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ 找不到 ID 為 {reminder_id} 的提醒")
         return
 
-    if reminder["status"] == "done":
-        await update.message.reply_text(f"ℹ️ 提醒 ID {reminder_id} 已經是完成狀態")
-        return
-
-    # 更新狀態
     success = await update_reminder_status(reminder_id, "done")
     if success:
-        # 關閉 GitLab Issue
         if reminder.get("gitlab_issue_iid"):
             try:
                 await gitlab_client.close_issue(reminder["gitlab_issue_iid"])
             except Exception as e:
                 logger.error(f"Failed to close GitLab issue: {e}")
         
-        # 取消排程 Job
         job_queue = context.application.job_queue
         if job_queue:
-            jobs = job_queue.get_jobs_by_name(f"remind_{reminder_id}")
-            for job in jobs:
+            for job in job_queue.get_jobs_by_name(f"remind_{reminder_id}"):
                 job.schedule_removal()
         
         await update.message.reply_text(f"✅ 提醒 ID {reminder_id} 已標記為完成！")
@@ -286,4 +332,5 @@ def register_reminder_handlers(app, chat_filter=None):
     app.add_handler(UnifiedCommandHandler("remind_list", remind_list_command, filters=chat_filter))
     app.add_handler(UnifiedCommandHandler("remind_done", remind_done_command, filters=chat_filter))
     app.add_handler(CallbackQueryHandler(remind_type_callback, pattern=r"^remind_type:"))
+    app.add_handler(CallbackQueryHandler(remind_day_callback, pattern=r"^remind_day:"))
     app.add_handler(CallbackQueryHandler(remind_time_callback, pattern=r"^remind_time:"))
