@@ -7,6 +7,8 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./telegramID2gitlabID.json:/app/telegramID2gitlabID.json
     environment:
       - TZ=Asia/Taipei
       - DB_PATH=/app/data/reviews.db
+      - GITLAB_MAPPING_PATH=/app/telegramID2gitlabID.json

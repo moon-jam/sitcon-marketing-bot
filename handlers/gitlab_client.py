@@ -7,11 +7,13 @@ from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
-MAPPING_FILE = "telegramID2gitlabID.json"
-
 class GitLabClient:
     def __init__(self):
         self._mapping = None
+
+    @property
+    def mapping_file(self):
+        return os.getenv("GITLAB_MAPPING_PATH", "telegramID2gitlabID.json")
 
     @property
     def url(self):
@@ -34,15 +36,16 @@ class GitLabClient:
         if self._mapping is not None:
             return self._mapping
         
-        if not os.path.exists(MAPPING_FILE):
-            logger.warning(f"Mapping file {MAPPING_FILE} not found.")
+        path = self.mapping_file
+        if not os.path.exists(path):
+            logger.warning(f"Mapping file {path} not found.")
             return {}
         
         try:
-            with open(MAPPING_FILE, "r") as f:
+            with open(path, "r") as f:
                 self._mapping = json.load(f)
         except Exception as e:
-            logger.error(f"Error loading mapping file: {e}")
+            logger.error(f"Error loading mapping file {path}: {e}")
             self._mapping = {}
         return self._mapping
 
