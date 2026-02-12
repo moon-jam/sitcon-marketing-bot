@@ -91,7 +91,8 @@ class GitLabClient:
         title: str, 
         description: str, 
         assignee_id: Optional[int] = None,
-        labels: Optional[List[str]] = None
+        labels: Optional[List[str]] = None,
+        due_date: Optional[str] = None
     ) -> Optional[dict]:
         """Creates an issue on GitLab."""
         if not self.project_id or not self.headers:
@@ -106,6 +107,8 @@ class GitLabClient:
             data["assignee_ids"] = [assignee_id]
         if labels:
             data["labels"] = ",".join(labels)
+        if due_date:
+            data["due_date"] = due_date
 
         try:
             async with httpx.AsyncClient() as client:

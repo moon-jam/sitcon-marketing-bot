@@ -366,16 +366,5 @@ async def execute_reminder_job(context):
         except Exception as e:
             logger.error(f"Failed to send custom reminder {reminder_id} to {chat_id}: {e}")
 
-    # 如果是週期性的，更新下次時間並重新排程
-    if reminder["timing_type"] == "periodic" and reminder["interval_minutes"]:
-        from datetime import timedelta
-
-        next_at = datetime.now(TZ) + timedelta(minutes=reminder["interval_minutes"])
-        await update_next_remind_at(reminder_id, next_at)
-        
-        # 重新排程
-        reminder["next_remind_at"] = next_at
-        schedule_reminder_job(context.application, reminder)
-    else:
-        # 一次性的提醒，發送後就不再有 next_remind_at (但 status 還是 pending 直到 /remind_done)
-        await update_next_remind_at(reminder_id, None)
+    # 發送後清除 next_remind_at (不論是否成功)
+    await update_next_remind_at(reminder_id, None)
