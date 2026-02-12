@@ -333,6 +333,17 @@ async def get_pending_reminders_by_username(username: str) -> list[dict]:
             return [dict(row) for row in rows]
 
 
+async def get_all_pending_reminders() -> list[dict]:
+    """取得所有待處理的提醒"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM reminders WHERE status = 'pending' ORDER BY created_at DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
 async def update_reminder_status(reminder_id: int, status: str) -> bool:
     """更新提醒狀態"""
     async with aiosqlite.connect(DB_PATH) as db:
