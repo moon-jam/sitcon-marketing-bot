@@ -4,6 +4,7 @@
 - 提醒 submitters 修改 need_fix reviews（週期由 .env 設定）
 """
 
+import html
 import logging
 import os
 from datetime import datetime, time
@@ -100,22 +101,25 @@ async def send_pending_review_notification(bot: Bot, chat_ids: list[int]) -> boo
         return False
 
     # 建立提醒訊息
-    reviewer_mentions = " ".join([f"@{username}" for username in reviewers])
-    review_list = "\n".join(
-        [f"• {r['sponsor_name']} - {r['link']}" for r in pending_reviews]
-    )
+    reviewer_mentions = " ".join([f"@{html.escape(u)}" for u in reviewers])
+    review_lines = [
+        f"• {html.escape(r['sponsor_name'])} - {html.escape(r['link'])}"
+        for r in pending_reviews
+    ]
+    review_list = "\n".join(review_lines)
 
     message = (
         f"📢 Review 提醒\n\n"
         f"{reviewer_mentions}\n\n"
-        f"以下項目等待審核：\n{review_list}\n\n"
+        f"以下項目等待審核：\n"
+        f"<blockquote expandable>{review_list}</blockquote>\n"
         f"請使用 /review_list 查看詳細資訊"
     )
 
     # 發送到所有允許的聊天室
     for chat_id in chat_ids:
         try:
-            await bot.send_message(chat_id=chat_id, text=message)
+            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
             logger.info(f"Sent pending review notification to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send notification to chat {chat_id}: {e}")
@@ -142,23 +146,26 @@ async def send_need_fix_notification(bot: Bot, chat_ids: list[int]) -> bool:
         by_submitter[submitter].append(r)
 
     # 建立提醒訊息
-    lines = ["📢 修改提醒\n"]
+    detail_lines = []
     for submitter, reviews in by_submitter.items():
-        lines.append(f"@{submitter} 請修改：")
+        detail_lines.append(f"@{html.escape(submitter)} 請修改：")
         for r in reviews:
-            lines.append(f"  • {r['sponsor_name']} - {r['link']}")
+            detail_lines.append(f"  • {html.escape(r['sponsor_name'])} - {html.escape(r['link'])}")
             if r.get("comment"):
-                lines.append(f"    💬 {r['comment']}")
-        lines.append("")
+                detail_lines.append(f"    💬 {html.escape(r['comment'])}")
+        detail_lines.append("")
 
-    lines.append("修改完成後請使用 /review_again 重新送審")
-
-    message = "\n".join(lines)
+    details = "\n".join(detail_lines)
+    message = (
+        f"📢 修改提醒\n\n"
+        f"<blockquote expandable>{details}</blockquote>\n"
+        f"修改完成後請使用 /review_again 重新送審"
+    )
 
     # 發送到所有允許的聊天室
     for chat_id in chat_ids:
         try:
-            await bot.send_message(chat_id=chat_id, text=message)
+            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
             logger.info(f"Sent need-fix notification to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send notification to chat {chat_id}: {e}")

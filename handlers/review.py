@@ -2,6 +2,7 @@
 Review 相關指令處理器
 """
 
+import html
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -72,11 +73,12 @@ def parse_review_line(line: str) -> tuple[str, str] | None:
 
 
 def format_review_list(reviews: list[dict], title: str) -> str:
-    """格式化 review 清單"""
+    """格式化 review 清單（HTML 格式，支援摺疊）"""
+    escaped_title = html.escape(title)
     if not reviews:
-        return f"📋 {title}\n\n（無）"
+        return f"📋 {escaped_title}\n\n（無）"
 
-    lines = [f"📋 {title}\n"]
+    lines = []
     for r in reviews:
         status_emoji = {
             "pending": "⏳",
@@ -84,14 +86,15 @@ def format_review_list(reviews: list[dict], title: str) -> str:
             "need_fix": "🔧",
         }.get(r["status"], "❓")
 
-        lines.append(f"{status_emoji} {r['sponsor_name']}")
-        lines.append(f"   連結：{r['link']}")
-        lines.append(f"   提交者：{r['submitter_username']}")
+        lines.append(f"{status_emoji} {html.escape(r['sponsor_name'])}")
+        lines.append(f"   連結：{html.escape(r['link'])}")
+        lines.append(f"   提交者：{html.escape(r['submitter_username'])}")
         if r.get("comment"):
-            lines.append(f"   💬 評語：{r['comment']}")
+            lines.append(f"   💬 評語：{html.escape(r['comment'])}")
         lines.append("")
 
-    return "\n".join(lines)
+    content = "\n".join(lines)
+    return f"📋 {escaped_title}\n\n<blockquote expandable>{content}</blockquote>"
 
 
 async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,9 +137,9 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed:
             sponsor_name, link = parsed
             await add_review(sponsor_name, link, submitter_id, submitter_username)
-            success_items.append(f"✅ {sponsor_name}")
+            success_items.append(f"✅ {html.escape(sponsor_name)}")
         else:
-            failed_items.append(f"❌ {line}")
+            failed_items.append(f"❌ {html.escape(line)}")
 
     # 組織回覆訊息
     response_parts = []
@@ -144,7 +147,7 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if success_items:
         # 取得所有 reviewer 並標記
         reviewers = await get_all_reviewers()
-        reviewer_tags = " ".join([f"@{r}" for r in reviewers])
+        reviewer_tags = " ".join([f"@{html.escape(r)}" for r in reviewers])
 
         msg = "📝 已新增 Review 請求：\n" + "\n".join(success_items)
         if reviewer_tags:
@@ -160,7 +163,7 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_reviews = await get_pending_reviews()
     response_parts.append(format_review_list(pending_reviews, "目前待審核項目"))
 
-    await update.message.reply_text("\n\n".join(response_parts))
+    await update.message.reply_text("\n\n".join(response_parts), parse_mode="HTML")
 
 
 async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -236,7 +239,6 @@ async def _do_approve(
 async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """處理審核通過的 callback"""
     query = update.callback_query
-    await query.answer()
 
     # 解析 callback_data
     sponsor_name = query.data.replace("approve:", "")
@@ -244,8 +246,13 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = await _do_approve(update, context, sponsor_name)
 
     if success:
-        await query.edit_message_text(f"✅ 「{sponsor_name}」已審核通過！")
+        await query.answer(text=f"✅ 「{sponsor_name}」已審核通過！")
+        try:
+            await query.message.delete()
+        except Exception:
+            await query.edit_message_text(f"✅ 「{sponsor_name}」已審核通過！")
     else:
+        await query.answer()
         await query.edit_message_text(
             f"❌ 審核「{sponsor_name}」失敗（可能已審核或不存在）"
         )
@@ -336,7 +343,6 @@ async def _do_need_fix(
 async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """處理標記需要修改的 callback"""
     query = update.callback_query
-    await query.answer()
 
     # 解析 callback_data
     sponsor_name = query.data.replace("needfix:", "")
@@ -348,10 +354,15 @@ async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if success:
         msg = f"🔧 「{sponsor_name}」已標記為需要修改"
-        if comment:
-            msg += f"\n💬 評語：{comment}"
-        await query.edit_message_text(msg)
+        await query.answer(text=msg)
+        try:
+            await query.message.delete()
+        except Exception:
+            if comment:
+                msg += f"\n💬 評語：{comment}"
+            await query.edit_message_text(msg)
     else:
+        await query.answer()
         await query.edit_message_text(
             f"❌ 標記「{sponsor_name}」失敗（可能已審核或不存在）"
         )
@@ -380,7 +391,7 @@ async def review_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if need_fix:
         response_parts.append(format_review_list(need_fix, "待修改項目"))
 
-    await update.message.reply_text("\n".join(response_parts))
+    await update.message.reply_text("\n".join(response_parts), parse_mode="HTML")
 
 
 async def review_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,18 +438,18 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query or not query.data:
         return
 
-    await query.answer()
-
     # 解析 callback_data: "again:贊助商名稱"
     sponsor_name = query.data.replace("again:", "", 1)
 
     # 檢查是否存在
     review = await get_review_by_name(sponsor_name)
     if not review:
+        await query.answer()
         await query.edit_message_text(f"❌ 找不到「{sponsor_name}」的 review 請求")
         return
 
     if review["status"] != ReviewStatus.NEED_FIX.value:
+        await query.answer()
         await query.edit_message_text(f"ℹ️ 「{sponsor_name}」不在待修改狀態")
         return
 
@@ -446,13 +457,19 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = await update_review_status(sponsor_name, ReviewStatus.PENDING)
     if success:
         link = review.get("link", "")
+        result_text = f"🔄 「{sponsor_name}」已重新送審"
         if link:
-            await query.edit_message_text(
-                f"🔄 「{sponsor_name}」已重新送審\n📎 連結：{link}"
+            result_text += f"\n📎 連結：{link}"
+        await query.answer(text=f"🔄 「{sponsor_name}」已重新送審")
+        try:
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=query.message.chat_id, text=result_text
             )
-        else:
-            await query.edit_message_text(f"🔄 「{sponsor_name}」已重新送審")
+        except Exception:
+            await query.edit_message_text(result_text)
     else:
+        await query.answer()
         await query.edit_message_text(f"❌ 更新「{sponsor_name}」狀態失敗")
 
 
