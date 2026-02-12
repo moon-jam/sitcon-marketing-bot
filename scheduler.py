@@ -268,7 +268,7 @@ def setup_scheduler(app: Application, chat_ids: list[int]):
     job_queue.run_repeating(
         remind_pending_reviews,
         interval=interval_pending * 60,  # 轉換為秒
-        first=10,  # 啟動後 10 秒執行第一次
+        first=interval_pending * 60,  # 第一次執行延遲一個週期
         data=job_data,
         name="pending_reminder",
     )
@@ -278,7 +278,7 @@ def setup_scheduler(app: Application, chat_ids: list[int]):
     job_queue.run_repeating(
         remind_need_fix_reviews,
         interval=interval_need_fix * 60,  # 轉換為秒
-        first=30,  # 啟動後 30 秒執行第一次（避免與 pending 重疊）
+        first=interval_need_fix * 60,  # 第一次執行延遲一個週期
         data=job_data,
         name="need_fix_reminder",
     )
