@@ -327,7 +327,7 @@ def schedule_reminder_job(app: Application, reminder: dict):
         return
 
     # 如果已經過期且是一次性的，就不排程
-    now = datetime.now()
+    now = datetime.now(TZ)
     if next_at < now and reminder["timing_type"] == "once":
         return
 
@@ -370,7 +370,7 @@ async def execute_reminder_job(context):
     if reminder["timing_type"] == "periodic" and reminder["interval_minutes"]:
         from datetime import timedelta
 
-        next_at = datetime.now() + timedelta(minutes=reminder["interval_minutes"])
+        next_at = datetime.now(TZ) + timedelta(minutes=reminder["interval_minutes"])
         await update_next_remind_at(reminder_id, next_at)
         
         # 重新排程
