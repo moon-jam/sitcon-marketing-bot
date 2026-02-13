@@ -59,7 +59,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏰ 提醒與 GitLab 開卡：\n"
         "• /remind @user <內容> - 設定提醒並同步在 GitLab 開卡\n"
         "• /remind_list - 列出自己的待處理提醒\n"
-        "• /remind_done <ID> - 標記提醒為完成（會自動關閉 GitLab Issue）\n\n"
+        "• /remind_done <ID> - 標記提醒為完成（會自動關閉 GitLab Issue）\n"
+        "• /daily_summary - 手動觸發每日摘要通知\n\n"
         "⏰ 提醒：我會依照設定週期自動通知 reviewers\n"
         "💡 提示：可以批量新增 review，每行一個"
     )
@@ -85,6 +86,7 @@ async def post_init(application: Application) -> None:
         BotCommand("remind", "設定提醒並同步開卡 (@user 內容)"),
         BotCommand("remind_list", "列出我的待處理提醒"),
         BotCommand("remind_done", "標記提醒為完成 (ID)"),
+        BotCommand("daily_summary", "手動觸發每日摘要通知"),
         BotCommand("help", "顯示使用說明"),
     ]
     await application.bot.set_my_commands(commands)

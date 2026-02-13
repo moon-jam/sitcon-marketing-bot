@@ -2,12 +2,13 @@
 排程提醒功能
 - 提醒 reviewers 審核 pending reviews（週期由 .env 設定）
 - 提醒 submitters 修改 need_fix reviews（週期由 .env 設定）
+- 每日摘要通知（每天早上定時發送待處理事項）
 """
 
 import html
 import logging
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from zoneinfo import ZoneInfo
 from telegram import Bot
@@ -18,6 +19,7 @@ from database import (
     get_need_fix_reviews,
     get_all_reviewers,
     get_active_reminders,
+    get_all_pending_reminders,
     update_next_remind_at,
     get_reminder_by_id,
 )
@@ -246,6 +248,154 @@ async def remind_need_fix_reviews(context):
     await send_need_fix_notification(context.bot, chat_ids)
 
 
+async def build_daily_summary_message() -> str | None:
+    """建構每日摘要訊息，按時間區間與負責人分組"""
+    from handlers.gitlab_client import gitlab_client
+
+    now = datetime.now(TZ)
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+    # 本週結束：本週日 23:59
+    days_until_sunday = 6 - today.weekday()  # weekday: 0=Mon, 6=Sun
+    week_end = today + timedelta(days=days_until_sunday)
+
+    def _resolve_tg(username: str) -> str:
+        """將 username 反向映射為 Telegram username"""
+        return gitlab_client.get_telegram_username(username)
+
+    # --- 收集提醒 ---
+    reminders = await get_all_pending_reminders()
+    buckets = {
+        "overdue": [],   # 已過期
+        "today": [],     # 今天
+        "tomorrow": [],  # 明天
+        "week": [],      # 本週其餘
+        "later": [],     # 更之後
+    }
+
+    for r in reminders:
+        next_at = r.get("next_remind_at")
+        if not next_at:
+            buckets["later"].append(r)
+            continue
+        if isinstance(next_at, str):
+            try:
+                next_at = datetime.fromisoformat(next_at)
+            except ValueError:
+                buckets["later"].append(r)
+                continue
+        if next_at.tzinfo is None:
+            next_at = next_at.replace(tzinfo=TZ)
+        remind_date = next_at.date()
+
+        if next_at < now:
+            buckets["overdue"].append(r)
+        elif remind_date == today:
+            buckets["today"].append(r)
+        elif remind_date == tomorrow:
+            buckets["tomorrow"].append(r)
+        elif remind_date <= week_end:
+            buckets["week"].append(r)
+        else:
+            buckets["later"].append(r)
+
+    # --- 收集 Reviews ---
+    pending_reviews = await get_pending_reviews()
+    need_fix_reviews = await get_need_fix_reviews()
+
+    # 如果完全沒事項就不發
+    has_reminders = any(buckets[k] for k in ["overdue", "today", "tomorrow", "week"])
+    if not has_reminders and not pending_reviews and not need_fix_reviews:
+        return None
+
+    # --- 格式化函式 ---
+    def _format_reminder_section(title: str, items: list) -> str:
+        if not items:
+            return ""
+        # 按負責人分組
+        by_user = {}
+        for r in items:
+            user = _resolve_tg(r.get("assignee_username") or "未指定")
+            by_user.setdefault(user, []).append(r)
+
+        lines = []
+        for user, user_items in by_user.items():
+            for item in user_items:
+                content = html.escape(item.get("content") or item.get("title") or "（無內容）")
+                next_at = item.get("next_remind_at")
+                time_str = ""
+                if next_at:
+                    if isinstance(next_at, str):
+                        try:
+                            next_at = datetime.fromisoformat(next_at)
+                        except ValueError:
+                            pass
+                    if isinstance(next_at, datetime):
+                        time_str = f" 🕐{next_at.strftime('%m/%d %H:%M')}"
+                line = f"• @{html.escape(user)}: {content}{time_str}"
+                if item.get("gitlab_issue_url"):
+                    line += f' (<a href="{item["gitlab_issue_url"]}">#{item["gitlab_issue_iid"]}</a>)'
+                lines.append(line)
+
+        content_text = "\n".join(lines)
+        return f"\n<b>{title}</b>\n<blockquote expandable>{content_text}</blockquote>"
+
+    # --- 組合訊息 ---
+    weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
+    header = f"☀️ <b>每日摘要</b> — {now.strftime('%m/%d')} 週{weekday_names[today.weekday()]}\n"
+
+    parts = [header]
+    parts.append(_format_reminder_section("🚨 已過期", buckets["overdue"]))
+    parts.append(_format_reminder_section("📌 今天", buckets["today"]))
+    parts.append(_format_reminder_section("📅 明天", buckets["tomorrow"]))
+    parts.append(_format_reminder_section("🗓️ 本週", buckets["week"]))
+
+    # Reviews
+    if pending_reviews:
+        review_lines = []
+        for r in pending_reviews:
+            tg_user = html.escape(_resolve_tg(r.get('submitter_username', '?')))
+            line = f"• {html.escape(r['sponsor_name'])} (@{tg_user})"
+            if r.get("gitlab_issue_url"):
+                line += f' (<a href="{r["gitlab_issue_url"]}">#{r["gitlab_issue_iid"]}</a>)'
+            review_lines.append(line)
+        parts.append(f'\n<b>📝 待審核 Review ({len(pending_reviews)})</b>\n<blockquote expandable>{chr(10).join(review_lines)}</blockquote>')
+
+    if need_fix_reviews:
+        fix_lines = []
+        for r in need_fix_reviews:
+            tg_user = html.escape(_resolve_tg(r.get('submitter_username', '?')))
+            line = f"• {html.escape(r['sponsor_name'])} (@{tg_user})"
+            if r.get("comment"):
+                line += f" 💬 {html.escape(r['comment'])}"
+            fix_lines.append(line)
+        parts.append(f'\n<b>🔧 待修改 Review ({len(need_fix_reviews)})</b>\n<blockquote expandable>{chr(10).join(fix_lines)}</blockquote>')
+
+    return "\n".join(p for p in parts if p)
+
+
+async def send_daily_summary(bot: Bot, chat_ids: list[int]) -> bool:
+    """發送每日摘要通知，回傳是否有發送"""
+    message = await build_daily_summary_message()
+    if not message:
+        logger.info("No items for daily summary, skipping")
+        return False
+
+    for chat_id in chat_ids:
+        try:
+            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            logger.info(f"Sent daily summary to chat {chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send daily summary to chat {chat_id}: {e}")
+    return True
+
+
+async def _daily_summary_job(context):
+    """排程任務：每日摘要"""
+    chat_ids = context.job.data.get("chat_ids", [])
+    await send_daily_summary(context.bot, chat_ids)
+
+
 def setup_scheduler(app: Application, chat_ids: list[int]):
     """設定排程任務"""
     job_queue = app.job_queue
@@ -283,6 +433,18 @@ def setup_scheduler(app: Application, chat_ids: list[int]):
         name="need_fix_reminder",
     )
     logger.info(f"Scheduled need-fix reminder every {interval_need_fix} minutes")
+
+    # 設定每日摘要通知（預設 09:00 Asia/Taipei）
+    daily_time_str = os.getenv("DAILY_SUMMARY_TIME", "09:00")
+    daily_time = _parse_time(daily_time_str) or time(9, 0)
+    daily_time = daily_time.replace(tzinfo=TZ)
+    job_queue.run_daily(
+        _daily_summary_job,
+        time=daily_time,
+        data=job_data,
+        name="daily_summary",
+    )
+    logger.info(f"Scheduled daily summary at {daily_time.strftime('%H:%M')} (Asia/Taipei)")
 
     logger.info(
         f"Scheduler setup complete. Reminders will be sent to chat IDs: {chat_ids}"

@@ -54,6 +54,25 @@ class GitLabClient:
         mapping = self._load_mapping()
         return mapping.get(telegram_username.lstrip("@"))
 
+    def get_telegram_username(self, username: str) -> str:
+        """反向映射：從任意 username 找到對應的 Telegram username。
+        如果 username 本身就是 Telegram username 則直接回傳，
+        如果是 GitLab username 則反查回 Telegram username。"""
+        username = username.lstrip("@")
+        mapping = self._load_mapping()  # tg_user -> gitlab_user
+
+        # 如果 username 本身就在 mapping 的 key 裡，那它就是 TG username
+        if username in mapping:
+            return username
+
+        # 反查：看看是否是某個 Telegram user 對應的 GitLab username
+        for tg_user, gitlab_user in mapping.items():
+            if isinstance(gitlab_user, str) and gitlab_user == username:
+                return tg_user
+
+        # 找不到映射就原樣回傳
+        return username
+
     async def get_gitlab_user_id(self, telegram_username: str) -> Optional[int]:
         """Maps Telegram username to GitLab user ID."""
         gitlab_username = await self.get_gitlab_username(telegram_username)

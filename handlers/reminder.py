@@ -410,10 +410,25 @@ async def remind_done_act_callback(update: Update, context: ContextTypes.DEFAULT
             for job in context.application.job_queue.get_jobs_by_name(f"remind_{reminder_id}"): job.schedule_removal()
         await query.edit_message_text(f"✅ 提醒「{reminder['content'][:20]}...」已標記為完成！")
 
+async def daily_summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """處理 /daily_summary 指令 - 手動觸發每日摘要"""
+    if not update.message: return
+    from scheduler import send_daily_summary
+    from handlers.utils import get_allowed_chat_ids
+
+    chat_ids = get_allowed_chat_ids()
+    if not chat_ids and update.effective_chat:
+        chat_ids = [update.effective_chat.id]
+
+    sent = await send_daily_summary(context.bot, chat_ids)
+    if not sent:
+        await update.message.reply_text("📋 目前沒有任何待處理事項！")
+
 def register_reminder_handlers(app, chat_filter=None):
     app.add_handler(UnifiedCommandHandler("remind", remind_command, filters=chat_filter))
     app.add_handler(UnifiedCommandHandler("remind_list", remind_list_command, filters=chat_filter))
     app.add_handler(UnifiedCommandHandler("remind_done", remind_done_command, filters=chat_filter))
+    app.add_handler(UnifiedCommandHandler("daily_summary", daily_summary_command, filters=chat_filter))
     app.add_handler(CallbackQueryHandler(remind_day_callback, pattern=r"^remind_day:"))
     app.add_handler(CallbackQueryHandler(remind_day_back_callback, pattern=r"^remind_day_back$"))
     app.add_handler(CallbackQueryHandler(remind_month_picker_callback, pattern=r"^remind_month_picker$"))
