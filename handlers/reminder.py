@@ -281,7 +281,8 @@ async def remind_time_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     # 3. 步進器調整
     if data.startswith("adj_"):
         await query.answer()
-        _, unit, val = data.split(":")
+        adj_part, val = data.split(":")
+        unit = adj_part.split("_")[1]  # "adj_h" -> "h", "adj_m" -> "m"
         val = int(val)
         if unit == "h":
             context.user_data["remind_h"] = (context.user_data.get("remind_h", 9) + val) % 24
