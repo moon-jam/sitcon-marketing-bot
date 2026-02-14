@@ -97,24 +97,144 @@ def _get_time_stepper_keyboard(hour: int, minute: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
+def _parse_inline_datetime(text: str) -> tuple[datetime | None, str]:
+    """
+    嘗試從文字尾端解析日期時間。
+    支援格式：
+        - 2026-02-15 14:00  (完整)
+        - 2/15 14:00        (月/日 時:分)
+        - 2-15 14:00        (月-日 時:分)
+        - 2/15              (只有日期，預設 09:00)
+        - 14:00             (只有時間，預設今天)
+    回傳 (解析後的 datetime, 剩餘的內容文字)
+    找不到就回傳 (None, 原始文字)
+    """
+    import re
+    now = datetime.now(TZ)
+
+    patterns = [
+        # 完整格式：2026-02-15 14:00 or 2026/02/15 14:00
+        (r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})$',
+         lambda m: datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                            int(m.group(4)), int(m.group(5)), tzinfo=TZ)),
+        # 月/日 時:分：2/15 14:00
+        (r'(\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})$',
+         lambda m: datetime(now.year, int(m.group(1)), int(m.group(2)),
+                            int(m.group(3)), int(m.group(4)), tzinfo=TZ)),
+        # 只有日期：2/15 or 2-15
+        (r'(\d{1,2})[/-](\d{1,2})$',
+         lambda m: datetime(now.year, int(m.group(1)), int(m.group(2)),
+                            9, 0, tzinfo=TZ)),
+        # 只有時間：14:00
+        (r'(\d{1,2}):(\d{2})$',
+         lambda m: datetime(now.year, now.month, now.day,
+                            int(m.group(1)), int(m.group(2)), tzinfo=TZ)),
+    ]
+
+    stripped = text.rstrip()
+    for pattern, builder in patterns:
+        match = re.search(pattern, stripped)
+        if match:
+            try:
+                dt = builder(match)
+                # 如果時間已過且只指定了時間，改為明天
+                if dt < now and pattern == patterns[-1][0]:
+                    dt += timedelta(days=1)
+                # 如果只指定日期且年份的月份已過，改為明年
+                if dt < now and pattern == patterns[2][0]:
+                    dt = dt.replace(year=dt.year + 1)
+                content = stripped[:match.start()].rstrip()
+                if content:  # 確保還有剩餘內容
+                    return dt, content
+            except (ValueError, OverflowError):
+                continue
+
+    return None, text
+
+
+async def _create_reminder_direct(update: Update, context, target_user: str, content: str, next_at: datetime):
+    """直接建立提醒（跳過互動式選擇）"""
+    time_desc = next_at.strftime('%Y-%m-%d %H:%M')
+    due_date = next_at.strftime('%Y-%m-%d')
+
+    # GitLab 開卡
+    gitlab_issue_iid = None
+    gitlab_issue_url = None
+    try:
+        assignee_id = await gitlab_client.get_gitlab_user_id(target_user)
+        gitlab_user = await gitlab_client.get_gitlab_username(target_user)
+        tag_str = f"@{gitlab_user}" if gitlab_user else f"@{target_user} (Telegram)"
+        issue_desc = f"提醒對象：{tag_str}\\\\\\n預定時間：{time_desc}\\\\\\n內容：{content}"
+        issue = await gitlab_client.create_issue(
+            title=f"[Remind] {content}", description=issue_desc,
+            assignee_id=assignee_id, labels=["Status::Inbox", "Category::Task"], due_date=due_date
+        )
+        if issue:
+            gitlab_issue_iid = issue.get("iid")
+            gitlab_issue_url = issue.get("web_url")
+    except Exception as e:
+        logger.error(f"GitLab integration failed: {e}")
+
+    reminder_id = await add_reminder(
+        title=content[:50], content=content, assignee_tg_id=None, assignee_username=target_user,
+        gitlab_issue_iid=gitlab_issue_iid, gitlab_issue_url=gitlab_issue_url, timing_type="once", next_remind_at=next_at
+    )
+    from scheduler import schedule_reminder_job
+    schedule_reminder_job(context.application, {
+        "id": reminder_id, "assignee_username": target_user, "content": content,
+        "timing_type": "once", "next_remind_at": next_at, "gitlab_issue_url": gitlab_issue_url, "gitlab_issue_iid": gitlab_issue_iid,
+    })
+
+    msg = f"✅ 已設定 @{target_user} 的提醒！\n📝 內容：{content}\n⏰ 提醒時間：{time_desc}\n"
+    if gitlab_issue_url:
+        msg += f"📅 GitLab Due Date: {due_date}\n<a href=\"{gitlab_issue_url}\">GitLab Issue: #{gitlab_issue_iid}</a>"
+    await update.message.reply_text(msg, parse_mode="HTML")
+
 # --- Handlers ---
 
 async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """處理 /remind 指令 - 第一步：選擇日期"""
+    """處理 /remind 指令 - 第一步：選擇日期（或直接指定時間）"""
     if not update.message or not update.message.text: return
 
     args = extract_command_args(update.message, "remind")
     if not args:
-        await update.message.reply_text("❌ 格式錯誤\n\n使用方式：/remind @username 內容")
+        await update.message.reply_text(
+            "❌ 格式錯誤\n\n"
+            "使用方式：\n"
+            "• /remind @username 內容\n"
+            "• /remind @username 內容 2/15 14:00\n"
+            "• /remind @username 內容 2026-02-15 14:00\n"
+            "• /remind @username 內容 14:00（今天）"
+        )
         return
 
     parts = args.split(None, 1)
     if len(parts) < 2:
-        await update.message.reply_text("❌ 格式錯誤\n\n使用方式：/remind @username 內容")
+        await update.message.reply_text(
+            "❌ 格式錯誤\n\n"
+            "使用方式：\n"
+            "• /remind @username 內容\n"
+            "• /remind @username 內容 2/15 14:00"
+        )
         return
 
-    context.user_data["remind_target"] = parts[0].lstrip("@")
-    context.user_data["remind_content"] = parts[1]
+    target_user = parts[0].lstrip("@")
+    raw_content = parts[1]
+
+    # 嘗試從內容尾端解析日期時間
+    parsed_time, content = _parse_inline_datetime(raw_content)
+
+    if parsed_time:
+        # 直接建立提醒，跳過互動式選擇
+        context.user_data["remind_target"] = target_user
+        context.user_data["remind_content"] = content
+        await _create_reminder_direct(update, context, target_user, content, parsed_time)
+        return
+
+    # 沒有指定時間 → 走互動式日曆流程
+    context.user_data["remind_target"] = target_user
+    context.user_data["remind_content"] = raw_content
 
     # 日期選單：快捷按鈕 + 自訂日期
     keyboard = [
@@ -129,7 +249,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        f"🔔 正在為 @{context.user_data['remind_target']} 設定提醒：\n📝 內容：{context.user_data['remind_content']}\n\n📅 請選擇提醒日期：",
+        f"🔔 正在為 @{target_user} 設定提醒：\n📝 內容：{raw_content}\n\n📅 請選擇提醒日期：",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
