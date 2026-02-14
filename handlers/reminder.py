@@ -202,25 +202,30 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ 格式錯誤\n\n"
             "使用方式：\n"
+            "• /remind 內容（提醒自己）\n"
             "• /remind @username 內容\n"
-            "• /remind @username 內容 2/15 14:00\n"
-            "• /remind @username 內容 2026-02-15 14:00\n"
-            "• /remind @username 內容 14:00（今天）"
+            "• /remind 內容 2/15 14:00\n"
+            "• /remind @username 內容 14:00"
         )
         return
 
     parts = args.split(None, 1)
-    if len(parts) < 2:
-        await update.message.reply_text(
-            "❌ 格式錯誤\n\n"
-            "使用方式：\n"
-            "• /remind @username 內容\n"
-            "• /remind @username 內容 2/15 14:00"
-        )
-        return
 
-    target_user = parts[0].lstrip("@")
-    raw_content = parts[1]
+    # 判斷第一個詞是否為 @username
+    if parts[0].startswith("@"):
+        if len(parts) < 2:
+            await update.message.reply_text(
+                "❌ 格式錯誤\n\n"
+                "使用方式：/remind @username 內容"
+            )
+            return
+        target_user = parts[0].lstrip("@")
+        raw_content = parts[1]
+    else:
+        # 沒有 @ → 提醒自己
+        user = update.message.from_user
+        target_user = user.username or str(user.id)
+        raw_content = args
 
     # 嘗試從內容尾端解析日期時間
     parsed_time, content = _parse_inline_datetime(raw_content)
