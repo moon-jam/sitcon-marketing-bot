@@ -53,13 +53,17 @@ def parse_review_line(line: str) -> tuple[str, str] | None:
     格式：贊助商/文件名稱 : 連結（冒號前後可不加空格）
     回傳 (sponsor_name, link) 或 None（格式錯誤）
     """
+    # 支援全形冒號，先將全形轉換為半形
+    line = line.replace("：", ":")
+
     # 優先使用 " : " 作為分隔符（前後有空格）
     if " : " in line:
         parts = line.split(" : ", 1)
     else:
         # 容許冒號前後沒空格，但要避免拆到 URL 中的 "://"
-        # 使用 regex 匹配第一個不屬於 :// 的冒號
-        match = re.match(r'^(.+?)(?<!/)(?<!https?):(.*)', line)
+        # Python 的 re 模組不支援變動長度的 lookbehind (?<!https?)
+        # 因此改為使用固定長度的 (?<!http)(?<!https)
+        match = re.match(r'^(.+?)(?<!/)(?<!http)(?<!https):(.*)', line)
         if not match:
             return None
         parts = [match.group(1), match.group(2)]
@@ -119,16 +123,19 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 取得指令後的所有文字
     text = extract_command_args(update.message, "review")
 
+    error_msg = (
+        "❌ 格式錯誤\n\n"
+        "請確保使用冒號「:」分隔 名稱 與 連結。\n\n"
+        "使用方式：\n"
+        "/review 贊助商名稱 : 連結\n\n"
+        "或批量新增：\n"
+        "/review 贊助商1 : 連結1\n"
+        "贊助商2 : 連結2\n"
+        "贊助商3 : 連結3"
+    )
+
     if not text:
-        await update.message.reply_text(
-            "❌ 格式錯誤\n\n"
-            "使用方式：\n"
-            "/review 贊助商名稱 : 連結\n\n"
-            "或批量新增：\n"
-            "/review 贊助商1 : 連結1\n"
-            "贊助商2 : 連結2\n"
-            "贊助商3 : 連結3"
-        )
+        await update.message.reply_text(error_msg)
         return
 
     # 分割多行
@@ -183,6 +190,10 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_items.append(success_msg)
         else:
             failed_items.append(f"❌ {html.escape(line)}")
+
+    if not success_items:
+        await update.message.reply_text(error_msg)
+        return
 
     # 組織回覆訊息
     response_parts = []
