@@ -25,6 +25,8 @@ from database import (
     update_review_status,
     get_reminder_by_id,
     ReviewStatus,
+    track_bot_message,
+    get_and_clear_bot_messages,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,7 +136,17 @@ async def send_pending_review_notification(bot: Bot, chat_ids: list[int]) -> boo
     # 發送到所有允許的聊天室
     for chat_id in chat_ids:
         try:
-            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            # 刪除舊訊息
+            old_msg_ids = await get_and_clear_bot_messages(chat_id, "pending_review")
+            for msg_id in old_msg_ids:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                except Exception as e:
+                    logger.debug(f"Could not delete old pending_review msg {msg_id}: {e}")
+
+            # 發送新訊息
+            msg = await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            await track_bot_message(chat_id, msg.message_id, "pending_review")
             logger.info(f"Sent pending review notification to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send notification to chat {chat_id}: {e}")
@@ -183,7 +195,17 @@ async def send_need_fix_notification(bot: Bot, chat_ids: list[int]) -> bool:
     # 發送到所有允許的聊天室
     for chat_id in chat_ids:
         try:
-            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            # 刪除舊訊息
+            old_msg_ids = await get_and_clear_bot_messages(chat_id, "need_fix")
+            for msg_id in old_msg_ids:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                except Exception as e:
+                    logger.debug(f"Could not delete old need_fix msg {msg_id}: {e}")
+
+            # 發送新訊息
+            msg = await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            await track_bot_message(chat_id, msg.message_id, "need_fix")
             logger.info(f"Sent need-fix notification to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send notification to chat {chat_id}: {e}")
@@ -386,7 +408,17 @@ async def send_daily_summary(bot: Bot, chat_ids: list[int]) -> bool:
 
     for chat_id in chat_ids:
         try:
-            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            # 刪除舊訊息
+            old_msg_ids = await get_and_clear_bot_messages(chat_id, "daily_summary")
+            for msg_id in old_msg_ids:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                except Exception as e:
+                    logger.debug(f"Could not delete old daily_summary msg {msg_id}: {e}")
+
+            # 發送新訊息
+            msg = await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            await track_bot_message(chat_id, msg.message_id, "daily_summary")
             logger.info(f"Sent daily summary to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send daily summary to chat {chat_id}: {e}")
@@ -463,7 +495,17 @@ async def sync_gitlab_issues(bot: Bot = None, chat_ids: list[int] = None):
         msg = f"🔄 <b>GitLab 同步更新</b>\n\n" + "\n".join(notify_lines)
         for chat_id in chat_ids:
             try:
-                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+                # 刪除舊訊息
+                old_msg_ids = await get_and_clear_bot_messages(chat_id, "gitlab_sync")
+                for msg_id in old_msg_ids:
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                    except Exception as e:
+                        logger.debug(f"Could not delete old gitlab_sync msg {msg_id}: {e}")
+
+                # 發送新訊息
+                sent_msg = await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+                await track_bot_message(chat_id, sent_msg.message_id, "gitlab_sync")
             except Exception as e:
                 logger.error(f"Failed to send sync notification to {chat_id}: {e}")
 

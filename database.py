@@ -91,19 +91,51 @@ async def init_db():
         except aiosqlite.OperationalError:
             await db.execute("ALTER TABLE reminders ADD COLUMN gitlab_issue_url TEXT")
 
-        # Reviewers 表
+        # Bot 訊息追蹤表（用於自動收回）
         await db.execute(
             """
-            CREATE TABLE IF NOT EXISTS reviewers (
+            CREATE TABLE IF NOT EXISTS bot_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                message_type TEXT NOT NULL, -- 例如 'daily_summary', 'pending_reminder'
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
+            """
         )
 
         await db.commit()
 
+# ==================== Bot Messages 操作 ====================
+
+async def track_bot_message(chat_id: int, message_id: int, message_type: str):
+    """記錄 Bot 發送的訊息 ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO bot_messages (chat_id, message_id, message_type) VALUES (?, ?, ?)",
+            (chat_id, message_id, message_type)
+        )
+        await db.commit()
+
+async def get_and_clear_bot_messages(chat_id: int, message_type: str) -> list[int]:
+    """取得特定類型先前的訊息 ID，並從資料庫中清除它們"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT message_id FROM bot_messages WHERE chat_id = ? AND message_type = ?",
+            (chat_id, message_type)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            message_ids = [row["message_id"] for row in rows]
+        
+        if message_ids:
+            await db.execute(
+                "DELETE FROM bot_messages WHERE chat_id = ? AND message_type = ?",
+                (chat_id, message_type)
+            )
+            await db.commit()
+            
+        return message_ids
 
 # ==================== Reviews 操作 ====================
 
