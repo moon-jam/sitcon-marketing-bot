@@ -21,7 +21,10 @@ from database import (
     get_active_reminders,
     get_all_pending_reminders,
     update_next_remind_at,
+    update_reminder_status,
+    update_review_status,
     get_reminder_by_id,
+    ReviewStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -396,6 +399,81 @@ async def _daily_summary_job(context):
     await send_daily_summary(context.bot, chat_ids)
 
 
+async def sync_gitlab_issues(bot: Bot = None, chat_ids: list[int] = None):
+    """同步 GitLab issue 狀態：如果 issue 已關閉，就更新資料庫"""
+    from handlers.gitlab_client import gitlab_client
+
+    # 收集所有有 GitLab IID 的待處理項目
+    reminders = await get_all_pending_reminders()
+    pending_reviews = await get_pending_reviews()
+    need_fix_reviews = await get_need_fix_reviews()
+
+    # 建立 IID → 資料的對應
+    reminder_by_iid = {}
+    for r in reminders:
+        iid = r.get("gitlab_issue_iid")
+        if iid:
+            reminder_by_iid[int(iid)] = r
+
+    review_by_iid = {}
+    for r in pending_reviews + need_fix_reviews:
+        iid = r.get("gitlab_issue_iid")
+        if iid:
+            review_by_iid[int(iid)] = r
+
+    all_iids = list(set(list(reminder_by_iid.keys()) + list(review_by_iid.keys())))
+    if not all_iids:
+        logger.debug("GitLab sync: no issues to check")
+        return
+
+    # 批次查詢 GitLab
+    issues = await gitlab_client.get_issues_by_iids(all_iids)
+    closed_iids = {issue["iid"] for issue in issues if issue.get("state") == "closed"}
+
+    if not closed_iids:
+        logger.debug(f"GitLab sync: checked {len(all_iids)} issues, none closed")
+        return
+
+    synced_reminders = 0
+    synced_reviews = 0
+    notify_lines = []
+
+    # 更新已關閉的 reminders
+    for iid in closed_iids:
+        if iid in reminder_by_iid:
+            r = reminder_by_iid[iid]
+            await update_reminder_status(r["id"], "done")
+            synced_reminders += 1
+            notify_lines.append(f"✅ 提醒「{r.get('content', '')[:20]}」(@{r.get('assignee_username', '?')}) 已完成")
+            logger.info(f"GitLab sync: reminder #{r['id']} (issue #{iid}) marked as done")
+
+    # 更新已關閉的 reviews
+    for iid in closed_iids:
+        if iid in review_by_iid:
+            r = review_by_iid[iid]
+            await update_review_status(r["sponsor_name"], ReviewStatus.APPROVED)
+            synced_reviews += 1
+            notify_lines.append(f"✅ Review「{r['sponsor_name']}」已審核通過")
+            logger.info(f"GitLab sync: review '{r['sponsor_name']}' (issue #{iid}) marked as approved")
+
+    logger.info(f"GitLab sync complete: {synced_reminders} reminders, {synced_reviews} reviews updated")
+
+    # 發送通知
+    if notify_lines and bot and chat_ids:
+        msg = f"🔄 <b>GitLab 同步更新</b>\n\n" + "\n".join(notify_lines)
+        for chat_id in chat_ids:
+            try:
+                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"Failed to send sync notification to {chat_id}: {e}")
+
+
+async def _gitlab_sync_job(context):
+    """排程任務：GitLab issue 同步"""
+    chat_ids = context.job.data.get("chat_ids", [])
+    await sync_gitlab_issues(context.bot, chat_ids)
+
+
 def setup_scheduler(app: Application, chat_ids: list[int]):
     """設定排程任務"""
     job_queue = app.job_queue
@@ -445,6 +523,17 @@ def setup_scheduler(app: Application, chat_ids: list[int]):
         name="daily_summary",
     )
     logger.info(f"Scheduled daily summary at {daily_time.strftime('%H:%M')} (Asia/Taipei)")
+
+    # 設定 GitLab issue 同步（預設每 10 分鐘）
+    sync_interval = int(os.getenv("GITLAB_SYNC_INTERVAL", "10"))
+    job_queue.run_repeating(
+        _gitlab_sync_job,
+        interval=sync_interval * 60,
+        first=60,  # 啟動後 1 分鐘執行第一次
+        data=job_data,
+        name="gitlab_sync",
+    )
+    logger.info(f"Scheduled GitLab issue sync every {sync_interval} minutes")
 
     logger.info(
         f"Scheduler setup complete. Reminders will be sent to chat IDs: {chat_ids}"

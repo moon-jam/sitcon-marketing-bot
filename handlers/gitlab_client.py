@@ -143,6 +143,43 @@ class GitLabClient:
             logger.error(f"Error creating GitLab issue: {e}")
             return None
 
+    async def get_issue(self, issue_iid: int) -> Optional[dict]:
+        """取得單一 issue 的資訊"""
+        if not self.project_id or not self.headers:
+            return None
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.url}/projects/{self.project_id}/issues/{issue_iid}",
+                    headers=self.headers,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            logger.error(f"Error getting GitLab issue {issue_iid}: {e}")
+            return None
+
+    async def get_issues_by_iids(self, iids: list[int]) -> list[dict]:
+        """批次取得多個 issue（透過 iids[] 參數）"""
+        if not self.project_id or not self.headers or not iids:
+            return []
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.url}/projects/{self.project_id}/issues",
+                    params=[("iids[]", iid) for iid in iids] + [("per_page", 100)],
+                    headers=self.headers,
+                    timeout=15.0
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            logger.error(f"Error batch-getting GitLab issues: {e}")
+            return []
+
     async def close_issue(self, issue_iid: int) -> bool:
         """Closes an issue on GitLab."""
         if not self.project_id or not self.headers:
