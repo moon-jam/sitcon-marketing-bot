@@ -19,6 +19,8 @@ from database import (
     get_all_active_reviews,
     get_all_reviewers,
     ReviewStatus,
+    get_and_clear_bot_messages,
+    track_bot_message,
 )
 from handlers.gitlab_client import gitlab_client
 from scheduler import (
@@ -135,7 +137,17 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if not text:
-        await update.message.reply_text(error_msg)
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if chat_id:
+            old_msg_ids = await get_and_clear_bot_messages(chat_id, "review_cmd")
+            for msg_id in old_msg_ids:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                except Exception:
+                    pass
+        msg = await update.message.reply_text(error_msg)
+        if chat_id:
+            await track_bot_message(chat_id, msg.message_id, "review_cmd")
         return
 
     # 分割多行
@@ -192,7 +204,17 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed_items.append(f"❌ {html.escape(line)}")
 
     if not success_items:
-        await update.message.reply_text(error_msg)
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if chat_id:
+            old_msg_ids = await get_and_clear_bot_messages(chat_id, "review_cmd")
+            for msg_id in old_msg_ids:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                except Exception:
+                    pass
+        msg = await update.message.reply_text(error_msg)
+        if chat_id:
+            await track_bot_message(chat_id, msg.message_id, "review_cmd")
         return
 
     # 組織回覆訊息
@@ -217,7 +239,19 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_reviews = await get_pending_reviews()
     response_parts.append(format_review_list(pending_reviews, "目前待審核項目"))
 
-    await update.message.reply_text("\n\n".join(response_parts), parse_mode="HTML")
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if chat_id:
+        old_msg_ids = await get_and_clear_bot_messages(chat_id, "review_cmd")
+        for msg_id in old_msg_ids:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+
+    msg = await update.message.reply_text("\n\n".join(response_parts), parse_mode="HTML")
+    
+    if chat_id:
+        await track_bot_message(chat_id, msg.message_id, "review_cmd")
 
 
 async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
