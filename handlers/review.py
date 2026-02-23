@@ -19,8 +19,6 @@ from database import (
     get_all_active_reviews,
     get_all_reviewers,
     ReviewStatus,
-    get_and_clear_bot_messages,
-    track_bot_message,
 )
 from handlers.gitlab_client import gitlab_client
 from scheduler import (
@@ -32,6 +30,7 @@ from handlers.utils import (
     get_allowed_chat_ids,
     extract_command_args,
     UnifiedCommandHandler,
+    reply_and_track,
 )
 
 
@@ -137,18 +136,11 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if not text:
-        chat_id = update.effective_chat.id if update.effective_chat else None
-        if chat_id:
-            old_msg_ids = await get_and_clear_bot_messages(chat_id, "review_cmd")
-            for msg_id in old_msg_ids:
-                try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                except Exception:
-                    pass
-        msg = await update.message.reply_text(error_msg)
-        if chat_id:
-            await track_bot_message(chat_id, msg.message_id, "review_cmd")
+        await reply_and_track(update, context, error_msg, "review_cmd")
         return
+
+    # 先發送處理中訊息，加快回應速度
+    processing_msg = await reply_and_track(update, context, "⏳ 處理中...正與 GitLab 同步資料", "review_cmd")
 
     # 分割多行
     lines = [line.strip() for line in text.split("\n") if line.strip()]
@@ -204,17 +196,10 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed_items.append(f"❌ {html.escape(line)}")
 
     if not success_items:
-        chat_id = update.effective_chat.id if update.effective_chat else None
-        if chat_id:
-            old_msg_ids = await get_and_clear_bot_messages(chat_id, "review_cmd")
-            for msg_id in old_msg_ids:
-                try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                except Exception:
-                    pass
-        msg = await update.message.reply_text(error_msg)
-        if chat_id:
-            await track_bot_message(chat_id, msg.message_id, "review_cmd")
+        if processing_msg:
+            await processing_msg.edit_text(error_msg)
+        else:
+            await reply_and_track(update, context, error_msg, "review_cmd")
         return
 
     # 組織回覆訊息
@@ -239,19 +224,11 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_reviews = await get_pending_reviews()
     response_parts.append(format_review_list(pending_reviews, "目前待審核項目"))
 
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    if chat_id:
-        old_msg_ids = await get_and_clear_bot_messages(chat_id, "review_cmd")
-        for msg_id in old_msg_ids:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass
-
-    msg = await update.message.reply_text("\n\n".join(response_parts), parse_mode="HTML")
-    
-    if chat_id:
-        await track_bot_message(chat_id, msg.message_id, "review_cmd")
+    final_text = "\n\n".join(response_parts)
+    if processing_msg:
+        await processing_msg.edit_text(final_text, parse_mode="HTML")
+    else:
+        await reply_and_track(update, context, final_text, "review_cmd", parse_mode="HTML")
 
 
 async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -273,7 +250,7 @@ async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_T
     pending_reviews = await get_pending_reviews()
 
     if not pending_reviews:
-        await update.message.reply_text("📋 目前沒有待審核的項目")
+        await reply_and_track(update, context, "📋 目前沒有待審核的項目", "review_cmd")
         return
 
     # 建立 InlineKeyboard
@@ -289,8 +266,8 @@ async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_T
         )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "📋 請選擇要審核通過的項目：", reply_markup=reply_markup
+    await reply_and_track(
+        update, context, "📋 請選擇要審核通過的項目：", "review_cmd", reply_markup=reply_markup
     )
 
 
@@ -370,7 +347,7 @@ async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_
     pending_reviews = await get_pending_reviews()
 
     if not pending_reviews:
-        await update.message.reply_text("📋 目前沒有待審核的項目")
+        await reply_and_track(update, context, "📋 目前沒有待審核的項目", "review_cmd")
         return
 
     # 建立 InlineKeyboard
@@ -391,7 +368,7 @@ async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_
     if comment:
         prompt += f"\n💬 評語：{comment}"
 
-    await update.message.reply_text(prompt, reply_markup=reply_markup)
+    await reply_and_track(update, context, prompt, "review_cmd", reply_markup=reply_markup)
 
 
 async def _do_need_fix(
@@ -476,7 +453,7 @@ async def review_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     reviews = await get_all_active_reviews()
 
     if not reviews:
-        await update.message.reply_text("📋 目前沒有待處理的 review 項目")
+        await reply_and_track(update, context, "📋 目前沒有待處理的 review 項目", "review_cmd")
         return
 
     # 分類顯示
@@ -491,7 +468,7 @@ async def review_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if need_fix:
         response_parts.append(format_review_list(need_fix, "待修改項目"))
 
-    await update.message.reply_text("\n".join(response_parts), parse_mode="HTML")
+    await reply_and_track(update, context, "\n".join(response_parts), "review_cmd", parse_mode="HTML")
 
 
 async def review_notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -506,7 +483,7 @@ async def review_notify_command(update: Update, context: ContextTypes.DEFAULT_TY
     sent = await send_pending_review_notification(context.bot, chat_ids)
 
     if not sent:
-        await update.message.reply_text("📋 目前沒有待審核的項目，或尚未設定 reviewers")
+        await reply_and_track(update, context, "📋 目前沒有待審核的項目，或尚未設定 reviewers", "review_cmd")
 
 
 async def review_again_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -517,7 +494,7 @@ async def review_again_command(update: Update, context: ContextTypes.DEFAULT_TYP
     reviews = await get_need_fix_reviews()
 
     if not reviews:
-        await update.message.reply_text("📋 目前沒有待修改的項目")
+        await reply_and_track(update, context, "📋 目前沒有待修改的項目", "review_cmd")
         return
 
     # 建立 inline keyboard
@@ -527,8 +504,8 @@ async def review_again_command(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard.append([InlineKeyboardButton(name, callback_data=f"again:{name}")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🔄 請選擇要重新送審的項目：", reply_markup=reply_markup
+    await reply_and_track(
+        update, context, "🔄 請選擇要重新送審的項目：", "review_cmd", reply_markup=reply_markup
     )
 
 

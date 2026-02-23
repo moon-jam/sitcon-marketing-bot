@@ -4,8 +4,50 @@ Handler 工具與通用函數
 
 import os
 from urllib.parse import parse_qs, urlparse
-from telegram import Update
-from telegram.ext import CommandHandler
+from telegram import Update, Bot
+from telegram.ext import CommandHandler, ContextTypes
+
+from database import track_bot_message, get_and_clear_bot_messages
+
+async def reply_and_track(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, msg_type: str, reply_markup=None, parse_mode=None):
+    """發送訊息並追蹤，同時刪除舊訊息以防洗版"""
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    
+    if chat_id:
+        old_msg_ids = await get_and_clear_bot_messages(chat_id, msg_type)
+        for msg_id in old_msg_ids:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+
+    try:
+        msg = await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        if chat_id:
+            await track_bot_message(chat_id, msg.message_id, msg_type)
+        return msg
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to reply_and_track: {e}")
+        return None
+
+async def send_and_track(bot: Bot, chat_id: int, text: str, msg_type: str, reply_markup=None, parse_mode=None):
+    """用 bot.send_message 發送訊息並追蹤，同時刪除舊訊息以防洗版"""
+    old_msg_ids = await get_and_clear_bot_messages(chat_id, msg_type)
+    for msg_id in old_msg_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+
+    try:
+        msg = await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+        await track_bot_message(chat_id, msg.message_id, msg_type)
+        return msg
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to send_and_track to {chat_id}: {e}")
+        return None
 
 
 def get_allowed_chat_ids() -> list[int]:

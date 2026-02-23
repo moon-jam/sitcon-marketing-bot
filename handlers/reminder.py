@@ -14,37 +14,18 @@ from database import (
     get_pending_reminders_by_username,
     update_reminder_status,
     get_reminder_by_id,
-    get_and_clear_bot_messages,
-    track_bot_message,
 )
 from handlers.gitlab_client import gitlab_client
 from handlers.utils import (
     extract_command_args,
     UnifiedCommandHandler,
+    reply_and_track,
 )
 
 logger = logging.getLogger(__name__)
 TZ = ZoneInfo("Asia/Taipei")
 
 # --- Helpers ---
-
-async def _reply_and_track(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, msg_type: str, reply_markup=None, parse_mode=None):
-    """發送訊息並追蹤，同時刪除舊訊息以防洗版"""
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    
-    if chat_id:
-        old_msg_ids = await get_and_clear_bot_messages(chat_id, msg_type)
-        for msg_id in old_msg_ids:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except Exception:
-                pass
-
-    msg = await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    
-    if chat_id:
-        await track_bot_message(chat_id, msg.message_id, msg_type)
-    return msg
 
 def _get_date_label(target_date: datetime) -> str:
     """取得日期的友好標籤"""
@@ -208,7 +189,7 @@ async def _create_reminder_direct(update: Update, context, target_user: str, con
     msg = f"✅ 已設定 @{target_user} 的提醒！\n📝 內容：{content}\n⏰ 提醒時間：{time_desc}\n"
     if gitlab_issue_url:
         msg += f"📅 GitLab Due Date: {due_date}\n<a href=\"{gitlab_issue_url}\">GitLab Issue: #{gitlab_issue_iid}</a>"
-    await _reply_and_track(update, context, msg, "remind_cmd", parse_mode="HTML")
+    await reply_and_track(update, context, msg, "remind_cmd", parse_mode="HTML")
 
 # --- Handlers ---
 
@@ -218,7 +199,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = extract_command_args(update.message, "remind")
     if not args:
-        await _reply_and_track(
+        await reply_and_track(
             update, context,
             "❌ 格式錯誤\n\n"
             "使用方式：\n"
@@ -234,7 +215,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if parts[0].startswith("@"):
         if len(parts) < 2:
-            await _reply_and_track(
+            await reply_and_track(
                 update, context,
                 "❌ 格式錯誤\n\n"
                 "使用方式：/remind @username 內容",
@@ -271,11 +252,12 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("後天", callback_data="remind_day:2"),
         ],
         [
-            InlineKeyboardButton("📅 選擇其它日期 (月份)", callback_data="remind_month_picker"),
+            InlineKeyboardButton("自訂日期", callback_data="remind_month_picker"),
+            InlineKeyboardButton("取消", callback_data="remind_cancel")
         ]
     ]
 
-    await _reply_and_track(
+    await reply_and_track(
         update, context,
         f"🔔 正在為 @{target_user} 設定提醒：\n📝 內容：{raw_content}\n\n📅 請選擇提醒日期：",
         "remind_cmd",
@@ -389,10 +371,10 @@ async def remind_day_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         ],
         [
             InlineKeyboardButton("深夜 21:00", callback_data="remind_time:21:00"),
-            InlineKeyboardButton("自訂 (1小時後)", callback_data="remind_time:relative_60"),
+            InlineKeyboardButton("1小時後", callback_data="remind_time:relative_60"),
         ],
         [
-            InlineKeyboardButton("✨ 自訂精確時間 (步進器)", callback_data="remind_time:stepper_init"),
+            InlineKeyboardButton("✨ 自訂精確時間", callback_data="remind_time:stepper_init"),
         ]
     ]
     
@@ -512,7 +494,7 @@ async def remind_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     username = user.username or str(user.id)
     reminders = await get_pending_reminders_by_username(username)
     text = await _format_remind_list_text(reminders, "只有我")
-    await _reply_and_track(
+    await reply_and_track(
         update, context, text, "remind_list_cmd",
         reply_markup=InlineKeyboardMarkup(_get_filter_keyboard("remind_list", "me")),
         parse_mode="HTML"
@@ -536,7 +518,7 @@ async def remind_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = _get_filter_keyboard("remind_done", "me")
     for r in reminders:
         keyboard.append([InlineKeyboardButton(f"✅ @{r['assignee_username']}: {r['content'][:20]}", callback_data=f"remind_done_act:{r['id']}")])
-    await _reply_and_track(
+    await reply_and_track(
         update, context, "📋 請選擇要完成的提醒 (只有我)：", "remind_done_cmd",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -579,7 +561,7 @@ async def daily_summary_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     sent = await send_daily_summary(context.bot, chat_ids)
     if not sent:
-        await _reply_and_track(update, context, "📋 目前沒有任何待處理事項！", "daily_summary_cmd")
+        await update.message.reply_text("📋 目前沒有任何待處理事項！")
 
 def register_reminder_handlers(app, chat_filter=None):
     app.add_handler(UnifiedCommandHandler("remind", remind_command, filters=chat_filter))
