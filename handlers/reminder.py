@@ -184,7 +184,7 @@ async def _create_reminder_direct(update: Update, context, target_user: str, con
         assignee_id = await gitlab_client.get_gitlab_user_id(target_user)
         gitlab_user = await gitlab_client.get_gitlab_username(target_user)
         tag_str = f"@{gitlab_user}" if gitlab_user else f"@{target_user} (Telegram)"
-        issue_desc = f"提醒對象：{tag_str}\\\\\\n預定時間：{time_desc}\\\\\\n內容：{content}"
+        issue_desc = f"提醒對象：{tag_str}\\\n預定時間：{time_desc}\\\n內容：{content}"
         issue = await gitlab_client.create_issue(
             title=f"[Remind] {content}", description=issue_desc,
             assignee_id=assignee_id, labels=["Status::Inbox", "Category::Task"], due_date=due_date
