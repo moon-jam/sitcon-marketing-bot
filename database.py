@@ -140,6 +140,18 @@ async def get_and_clear_bot_messages(chat_id: int, message_type: str) -> list[in
 # ==================== Reviews 操作 ====================
 
 
+async def get_review_by_id(review_id: int) -> Optional[dict]:
+    """根據 ID 取得 review"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM reviews WHERE id = ?",
+            (review_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
 async def add_review(
     sponsor_name: str, 
     link: str, 
@@ -217,6 +229,44 @@ async def update_review_status(
                     status.value,
                     datetime.now(),
                     sponsor_name,
+                    ReviewStatus.APPROVED.value,
+                ),
+            )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def update_review_status_by_id(
+    review_id: int, status: ReviewStatus, comment: str = None
+) -> bool:
+    """根據 ID 更新 review 狀態（可選帶評語），回傳是否成功"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if comment is not None:
+            cursor = await db.execute(
+                """
+                UPDATE reviews 
+                SET status = ?, comment = ?, updated_at = ? 
+                WHERE id = ? AND status != ?
+                """,
+                (
+                    status.value,
+                    comment,
+                    datetime.now(),
+                    review_id,
+                    ReviewStatus.APPROVED.value,
+                ),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                UPDATE reviews 
+                SET status = ?, updated_at = ? 
+                WHERE id = ? AND status != ?
+                """,
+                (
+                    status.value,
+                    datetime.now(),
+                    review_id,
                     ReviewStatus.APPROVED.value,
                 ),
             )

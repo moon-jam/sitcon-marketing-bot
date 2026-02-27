@@ -15,10 +15,11 @@ from database import (
     get_review_by_name,
     update_review_status,
     get_pending_reviews,
-    get_need_fix_reviews,
     get_all_active_reviews,
     get_all_reviewers,
     ReviewStatus,
+    get_review_by_id,
+    update_review_status_by_id,
 )
 from handlers.gitlab_client import gitlab_client
 from scheduler import (
@@ -260,7 +261,7 @@ async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_T
             [
                 InlineKeyboardButton(
                     f"✅ {r['sponsor_name']}",
-                    callback_data=f"approve:{r['sponsor_name']}",
+                    callback_data=f"approve:{r['id']}",
                 )
             ]
         )
@@ -272,15 +273,22 @@ async def review_approve_command(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def _do_approve(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, sponsor_name: str
+    update: Update, context: ContextTypes.DEFAULT_TYPE, sponsor_name: str = None, review_id: int = None
 ):
     """執行審核通過"""
-    # 檢查是否存在
-    review = await get_review_by_name(sponsor_name)
+    if review_id:
+        review = await get_review_by_id(review_id)
+        if review:
+            sponsor_name = review["sponsor_name"]
+    else:
+        # 檢查是否存在
+        review = await get_review_by_name(sponsor_name)
+
     if not review:
         if update.message:
+            name_str = sponsor_name if sponsor_name else f"ID {review_id}"
             await update.message.reply_text(
-                f"❌ 找不到「{sponsor_name}」的 review 請求"
+                f"❌ 找不到「{name_str}」的 review 請求"
             )
         return False
 
@@ -289,7 +297,11 @@ async def _do_approve(
             await update.message.reply_text(f"ℹ️ 「{sponsor_name}」已經是審核通過狀態")
         return False
 
-    success = await update_review_status(sponsor_name, ReviewStatus.APPROVED)
+    if review_id:
+        success = await update_review_status_by_id(review_id, ReviewStatus.APPROVED)
+    else:
+        success = await update_review_status(sponsor_name, ReviewStatus.APPROVED)
+        
     if success:
         # 關閉 GitLab Issue
         if review.get("gitlab_issue_iid"):
@@ -314,9 +326,18 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
     # 解析 callback_data
-    sponsor_name = query.data.replace("approve:", "")
+    review_id_str = query.data.replace("approve:", "")
+    try:
+        review_id = int(review_id_str)
+    except ValueError:
+        await query.answer(text="❌ 無效的操作")
+        return
 
-    success = await _do_approve(update, context, sponsor_name)
+    # 取得名稱用於顯示
+    review = await get_review_by_id(review_id)
+    sponsor_name = review["sponsor_name"] if review else f"ID:{review_id}"
+
+    success = await _do_approve(update, context, review_id=review_id)
 
     if success:
         await query.answer(text=f"✅ 「{sponsor_name}」已審核通過！")
@@ -357,7 +378,7 @@ async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_
             [
                 InlineKeyboardButton(
                     f"🔧 {r['sponsor_name']}",
-                    callback_data=f"needfix:{r['sponsor_name']}",
+                    callback_data=f"needfix:{r['id']}",
                 )
             ]
         )
@@ -374,16 +395,24 @@ async def review_need_fix_command(update: Update, context: ContextTypes.DEFAULT_
 async def _do_need_fix(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-    sponsor_name: str,
+    sponsor_name: str = None,
     comment: str = None,
+    review_id: int = None,
 ):
     """執行標記需要修改"""
-    # 檢查是否存在
-    review = await get_review_by_name(sponsor_name)
+    if review_id:
+        review = await get_review_by_id(review_id)
+        if review:
+            sponsor_name = review["sponsor_name"]
+    else:
+        # 檢查是否存在
+        review = await get_review_by_name(sponsor_name)
+        
     if not review:
         if update.message:
+            name_str = sponsor_name if sponsor_name else f"ID {review_id}"
             await update.message.reply_text(
-                f"❌ 找不到「{sponsor_name}」的 review 請求"
+                f"❌ 找不到「{name_str}」的 review 請求"
             )
         return False
 
@@ -394,7 +423,11 @@ async def _do_need_fix(
             )
         return False
 
-    success = await update_review_status(sponsor_name, ReviewStatus.NEED_FIX, comment)
+    if review_id:
+        success = await update_review_status_by_id(review_id, ReviewStatus.NEED_FIX, comment)
+    else:
+        success = await update_review_status(sponsor_name, ReviewStatus.NEED_FIX, comment)
+        
     if success:
         submitter = review.get("submitter_username", "未知")
         link = review.get("link", "")
@@ -422,12 +455,21 @@ async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
     # 解析 callback_data
-    sponsor_name = query.data.replace("needfix:", "")
+    review_id_str = query.data.replace("needfix:", "")
+    try:
+        review_id = int(review_id_str)
+    except ValueError:
+        await query.answer(text="❌ 無效的操作")
+        return
+
+    # 取得名稱用於顯示
+    review = await get_review_by_id(review_id)
+    sponsor_name = review["sponsor_name"] if review else f"ID:{review_id}"
 
     # 取得評語（從 user_data）
     comment = context.user_data.pop("need_fix_comment", None)
 
-    success = await _do_need_fix(update, context, sponsor_name, comment)
+    success = await _do_need_fix(update, context, comment=comment, review_id=review_id)
 
     if success:
         msg = f"🔧 「{sponsor_name}」已標記為需要修改"
@@ -501,7 +543,7 @@ async def review_again_command(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = []
     for review in reviews:
         name = review["sponsor_name"]
-        keyboard.append([InlineKeyboardButton(name, callback_data=f"again:{name}")])
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"again:{review['id']}")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await reply_and_track(
@@ -515,15 +557,22 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query or not query.data:
         return
 
-    # 解析 callback_data: "again:贊助商名稱"
-    sponsor_name = query.data.replace("again:", "", 1)
+    # 解析 callback_data: "again:review_id"
+    review_id_str = query.data.replace("again:", "", 1)
+    try:
+        review_id = int(review_id_str)
+    except ValueError:
+        await query.answer(text="❌ 無效的操作")
+        return
 
     # 檢查是否存在
-    review = await get_review_by_name(sponsor_name)
+    review = await get_review_by_id(review_id)
     if not review:
         await query.answer()
-        await query.edit_message_text(f"❌ 找不到「{sponsor_name}」的 review 請求")
+        await query.edit_message_text(f"❌ 找不到 ID {review_id} 的 review 請求")
         return
+
+    sponsor_name = review["sponsor_name"]
 
     if review["status"] != ReviewStatus.NEED_FIX.value:
         await query.answer()
@@ -531,7 +580,7 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 改回 pending 狀態
-    success = await update_review_status(sponsor_name, ReviewStatus.PENDING)
+    success = await update_review_status_by_id(review_id, ReviewStatus.PENDING)
     if success:
         link = review.get("link", "")
         result_text = f"🔄 「{sponsor_name}」已重新送審"
