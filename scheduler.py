@@ -446,7 +446,7 @@ async def sync_gitlab_issues(bot: Bot = None, chat_ids: list[int] = None):
             r = reminder_by_iid[iid]
             await update_reminder_status(r["id"], "done")
             synced_reminders += 1
-            notify_lines.append(f"✅ 提醒「{r.get('content', '')[:20]}」(@{r.get('assignee_username', '?')}) 已完成")
+            # notify_lines.append(f"✅ 提醒「{r.get('content', '')[:20]}」(@{r.get('assignee_username', '?')}) 已完成")
             logger.info(f"GitLab sync: reminder #{r['id']} (issue #{iid}) marked as done")
 
     # 更新已關閉的 reviews
