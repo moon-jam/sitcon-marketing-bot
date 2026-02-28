@@ -17,12 +17,23 @@ async def reply_and_track(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         old_msg_ids = await get_and_clear_bot_messages(chat_id, msg_type)
         for msg_id in old_msg_ids:
             try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                await context.bot.delete_message(
+                    chat_id=chat_id, 
+                    message_id=msg_id, 
+                    read_timeout=30.0, 
+                    write_timeout=30.0
+                )
             except Exception:
                 pass
 
     try:
-        msg = await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        msg = await update.message.reply_text(
+            text, 
+            reply_markup=reply_markup, 
+            parse_mode=parse_mode,
+            read_timeout=30.0,
+            write_timeout=30.0
+        )
         if chat_id:
             await track_bot_message(chat_id, msg.message_id, msg_type)
         return msg
@@ -36,12 +47,24 @@ async def send_and_track(bot: Bot, chat_id: int, text: str, msg_type: str, reply
     old_msg_ids = await get_and_clear_bot_messages(chat_id, msg_type)
     for msg_id in old_msg_ids:
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            await bot.delete_message(
+                chat_id=chat_id, 
+                message_id=msg_id, 
+                read_timeout=30.0, 
+                write_timeout=30.0
+            )
         except Exception:
             pass
 
     try:
-        msg = await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+        msg = await bot.send_message(
+            chat_id=chat_id, 
+            text=text, 
+            reply_markup=reply_markup, 
+            parse_mode=parse_mode,
+            read_timeout=30.0,
+            write_timeout=30.0
+        )
         await track_bot_message(chat_id, msg.message_id, msg_type)
         return msg
     except Exception as e:

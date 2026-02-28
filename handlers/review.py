@@ -337,16 +337,17 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     review = await get_review_by_id(review_id)
     sponsor_name = review["sponsor_name"] if review else f"ID:{review_id}"
 
+    # 先回答 callback 避免 query 過期 (Query is too old)
+    await query.answer(text=f"⏳ 正在審核「{sponsor_name}」...")
+
     success = await _do_approve(update, context, review_id=review_id)
 
     if success:
-        await query.answer(text=f"✅ 「{sponsor_name}」已審核通過！")
         try:
             await query.message.delete()
         except Exception:
             await query.edit_message_text(f"✅ 「{sponsor_name}」已審核通過！")
     else:
-        await query.answer()
         await query.edit_message_text(
             f"❌ 審核「{sponsor_name}」失敗（可能已審核或不存在）"
         )
@@ -466,6 +467,9 @@ async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     review = await get_review_by_id(review_id)
     sponsor_name = review["sponsor_name"] if review else f"ID:{review_id}"
 
+    # 先回答 callback 避免 query 過期
+    await query.answer(text=f"⏳ 正在標記「{sponsor_name}」為需修改...")
+
     # 取得評語（從 user_data）
     comment = context.user_data.pop("need_fix_comment", None)
 
@@ -473,7 +477,6 @@ async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if success:
         msg = f"🔧 「{sponsor_name}」已標記為需要修改"
-        await query.answer(text=msg)
         try:
             await query.message.delete()
         except Exception:
@@ -481,7 +484,6 @@ async def need_fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"\n💬 評語：{comment}"
             await query.edit_message_text(msg)
     else:
-        await query.answer()
         await query.edit_message_text(
             f"❌ 標記「{sponsor_name}」失敗（可能已審核或不存在）"
         )
@@ -574,8 +576,10 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sponsor_name = review["sponsor_name"]
 
+    # 先回答 callback 避免 query 過期
+    await query.answer(text=f"⏳ 正在重新送審「{sponsor_name}」...")
+
     if review["status"] != ReviewStatus.NEED_FIX.value:
-        await query.answer()
         await query.edit_message_text(f"ℹ️ 「{sponsor_name}」不在待修改狀態")
         return
 
@@ -586,7 +590,6 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result_text = f"🔄 「{sponsor_name}」已重新送審"
         if link:
             result_text += f"\n📎 連結：{link}"
-        await query.answer(text=f"🔄 「{sponsor_name}」已重新送審")
         try:
             await query.message.delete()
             await context.bot.send_message(
@@ -595,7 +598,6 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.edit_message_text(result_text)
     else:
-        await query.answer()
         await query.edit_message_text(f"❌ 更新「{sponsor_name}」狀態失敗")
 
 
