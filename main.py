@@ -115,7 +115,7 @@ def main():
     else:
         logger.warning("ALLOWED_CHAT_IDS 未設定，所有聊天室都可以使用指令")
 
-    app = Application.builder().token(bot_token).post_init(post_init).build()(post_init).build()
+    app = Application.builder().token(bot_token).post_init(post_init).build()
 
     # 建立聊天室過濾器
     chat_filter = filters.Chat(allowed_chat_ids) if allowed_chat_ids else None
