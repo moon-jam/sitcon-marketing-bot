@@ -307,9 +307,12 @@ async def build_daily_summary_message() -> str | None:
     pending_reviews = await get_pending_reviews()
     need_fix_reviews = await get_need_fix_reviews()
 
+    # --- 收集 Inbox ---
+    inbox_issues = await gitlab_client.get_issues_by_labels(["Category::Task", "Status::Inbox"])
+
     # 如果完全沒事項就不發
     has_reminders = any(buckets[k] for k in ["overdue", "today", "tomorrow", "week"])
-    if not has_reminders and not pending_reviews and not need_fix_reviews:
+    if not has_reminders and not pending_reviews and not need_fix_reviews and not inbox_issues:
         return None
 
     # --- 格式化函式 ---
@@ -374,6 +377,26 @@ async def build_daily_summary_message() -> str | None:
                 line += f" 💬 {html.escape(r['comment'])}"
             fix_lines.append(line)
         parts.append(f'\n<b>🔧 待修改 Review ({len(need_fix_reviews)})</b>\n<blockquote expandable>{chr(10).join(fix_lines)}</blockquote>')
+
+    # Inbox清卡提醒
+    if inbox_issues:
+        inbox_lines = []
+        for issue in inbox_issues:
+            assignees = issue.get("assignees", [])
+            if assignees:
+                tg_users = [html.escape(_resolve_tg(a.get("username", "?"))) for a in assignees]
+                assignee_str = ", ".join(f"@{u}" for u in tg_users)
+            else:
+                assignee_str = "未指派"
+            
+            title = issue.get("title", "無標題")
+            # 避免標題過長
+            if len(title) > 30:
+                title = title[:28] + "..."
+                
+            line = f"• <a href=\"{issue.get('web_url', '')}\">#{issue.get('iid')} {html.escape(title)}</a> ({assignee_str})"
+            inbox_lines.append(line)
+        parts.append(f'\n<b>📥 請清 Inbox ({len(inbox_issues)})</b>\n<blockquote expandable>{chr(10).join(inbox_lines)}</blockquote>')
 
     return "\n".join(p for p in parts if p)
 

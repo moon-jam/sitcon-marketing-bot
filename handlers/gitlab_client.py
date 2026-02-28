@@ -180,6 +180,29 @@ class GitLabClient:
             logger.error(f"Error batch-getting GitLab issues: {e}")
             return []
 
+    async def get_issues_by_labels(self, labels: list[str], state: str = "opened") -> list[dict]:
+        """透過標籤取得 issues"""
+        if not self.project_id or not self.headers or not labels:
+            return []
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.url}/projects/{self.project_id}/issues",
+                    params={
+                        "labels": ",".join(labels),
+                        "state": state,
+                        "per_page": 100
+                    },
+                    headers=self.headers,
+                    timeout=15.0
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            logger.error(f"Error getting GitLab issues by labels {labels}: {e}")
+            return []
+
     async def close_issue(self, issue_iid: int) -> bool:
         """Closes an issue on GitLab."""
         if not self.project_id or not self.headers:
