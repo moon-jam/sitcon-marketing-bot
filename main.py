@@ -24,7 +24,6 @@ load_dotenv()
 
 from telegram import BotCommand, Update
 from telegram.ext import Application, ContextTypes, filters
-from telegram.request import HTTPXRequest
 
 from database import init_db
 from handlers import register_review_handlers, register_reviewer_handlers, register_reminder_handlers
@@ -116,17 +115,7 @@ def main():
     else:
         logger.warning("ALLOWED_CHAT_IDS 未設定，所有聊天室都可以使用指令")
 
-    # 設定自訂 timeout (原本是預設 5.0 秒，容易在執行大量刪除訊息時 TimedOut)
-    request = HTTPXRequest(
-        connection_pool_size=8,
-        read_timeout=60.0,
-        write_timeout=60.0,
-        connect_timeout=30.0,
-        pool_timeout=30.0,
-    )
-
-    # 建立 Application（加入 post_init 設定指令補完，並設定自訂 request）
-    app = Application.builder().token(bot_token).request(request).post_init(post_init).build()
+    app = Application.builder().token(bot_token).post_init(post_init).build()(post_init).build()
 
     # 建立聊天室過濾器
     chat_filter = filters.Chat(allowed_chat_ids) if allowed_chat_ids else None
