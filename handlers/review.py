@@ -198,7 +198,12 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not success_items:
         if processing_msg:
-            await processing_msg.edit_text(error_msg)
+            try:
+                await processing_msg.edit_text(error_msg, write_timeout=30.0, read_timeout=30.0)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to edit processing_msg with error: {e}")
+                await update.message.reply_text(error_msg)
         else:
             await reply_and_track(update, context, error_msg, "review_cmd")
         return
@@ -227,7 +232,13 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     final_text = "\n\n".join(response_parts)
     if processing_msg:
-        await processing_msg.edit_text(final_text, parse_mode="HTML")
+        try:
+            await processing_msg.edit_text(final_text, parse_mode="HTML", write_timeout=30.0, read_timeout=30.0)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to edit processing_msg with result: {e}")
+            # Fallback: send as a new message
+            await reply_and_track(update, context, final_text, "review_cmd", parse_mode="HTML")
     else:
         await reply_and_track(update, context, final_text, "review_cmd", parse_mode="HTML")
 
