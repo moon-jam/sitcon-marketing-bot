@@ -4,7 +4,7 @@ Handler 工具與通用函數
 
 import os
 from urllib.parse import parse_qs, urlparse
-from telegram import Update, Bot
+from telegram import Update, Bot, LinkPreviewOptions
 from telegram.ext import CommandHandler, ContextTypes
 
 from database import track_bot_message, get_and_clear_bot_messages
@@ -31,6 +31,7 @@ async def reply_and_track(update: Update, context: ContextTypes.DEFAULT_TYPE, te
             text, 
             reply_markup=reply_markup, 
             parse_mode=parse_mode,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             read_timeout=30.0,
             write_timeout=30.0
         )
@@ -62,6 +63,7 @@ async def send_and_track(bot: Bot, chat_id: int, text: str, msg_type: str, reply
             text=text, 
             reply_markup=reply_markup, 
             parse_mode=parse_mode,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             read_timeout=30.0,
             write_timeout=30.0
         )

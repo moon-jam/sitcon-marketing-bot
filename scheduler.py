@@ -11,7 +11,7 @@ import os
 from datetime import datetime, time, timedelta
 
 from zoneinfo import ZoneInfo
-from telegram import Bot
+from telegram import Bot, LinkPreviewOptions
 from telegram.ext import Application
 
 from database import (
@@ -201,7 +201,7 @@ async def notify_submitter_approved(
         f"@{submitter_username} 您提交的「{sponsor_name}」已審核通過！"
     )
     try:
-        await bot.send_message(chat_id=chat_id, text=message)
+        await bot.send_message(chat_id=chat_id, text=message, link_preview_options=LinkPreviewOptions(is_disabled=True))
     except Exception as e:
         logger.error(f"Failed to notify submitter: {e}")
 
@@ -229,7 +229,7 @@ async def notify_submitter_need_fix(
         message += f"\n💬 評語：{html.escape(comment)}"
     message += "\n\n修改完成後請使用 /review_again 重新送審"
     try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
     except Exception as e:
         logger.error(f"Failed to notify submitter: {e}")
 
@@ -411,7 +411,7 @@ async def send_daily_summary(bot: Bot, chat_ids: list[int]) -> bool:
     for chat_id in chat_ids:
         try:
             # Daily summary 不套用防洗版機制（保留對話紀錄）
-            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             logger.info(f"Sent daily summary to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send daily summary to chat {chat_id}: {e}")
@@ -638,7 +638,7 @@ async def execute_reminder_job(context):
     chat_ids = get_allowed_chat_ids()
     for chat_id in chat_ids:
         try:
-            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
         except Exception as e:
             logger.error(f"Failed to send custom reminder {reminder_id} to {chat_id}: {e}")
 
