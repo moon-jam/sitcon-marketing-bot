@@ -219,6 +219,8 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "📝 已新增 Review 請求：\n" + "\n".join(success_items)
         if reviewer_tags:
             msg += f"\n\n🔔 呼叫審核者：{reviewer_tags}"
+        else:
+            msg += "\n\n⚠️ 目前沒有設定 reviewer，請用 /reviewer_add 新增審核者"
         response_parts.append(msg)
 
     if failed_items:

@@ -104,6 +104,17 @@ async def init_db():
             """
         )
 
+        # Reviewers 表（與 reviews 不同，這是儲存審核者名單的表）
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reviewers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         await db.commit()
 
 # ==================== Bot Messages 操作 ====================
