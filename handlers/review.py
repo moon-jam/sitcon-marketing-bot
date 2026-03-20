@@ -4,7 +4,7 @@ Review 相關指令處理器
 
 import html
 import re
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
@@ -199,11 +199,16 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not success_items:
         if processing_msg:
             try:
-                await processing_msg.edit_text(error_msg, write_timeout=30.0, read_timeout=30.0)
+                await processing_msg.edit_text(
+                    error_msg, 
+                    write_timeout=30.0, 
+                    read_timeout=30.0,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
+                )
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error(f"Failed to edit processing_msg with error: {e}")
-                await update.message.reply_text(error_msg)
+                await update.message.reply_text(error_msg, link_preview_options=LinkPreviewOptions(is_disabled=True))
         else:
             await reply_and_track(update, context, error_msg, "review_cmd")
         return
@@ -235,7 +240,13 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_text = "\n\n".join(response_parts)
     if processing_msg:
         try:
-            await processing_msg.edit_text(final_text, parse_mode="HTML", write_timeout=30.0, read_timeout=30.0)
+            await processing_msg.edit_text(
+                final_text, 
+                parse_mode="HTML", 
+                write_timeout=30.0, 
+                read_timeout=30.0,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Failed to edit processing_msg with result: {e}")
@@ -606,10 +617,12 @@ async def again_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await query.message.delete()
             await context.bot.send_message(
-                chat_id=query.message.chat_id, text=result_text
+                chat_id=query.message.chat_id, 
+                text=result_text,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
         except Exception:
-            await query.edit_message_text(result_text)
+            await query.edit_message_text(result_text, link_preview_options=LinkPreviewOptions(is_disabled=True))
     else:
         await query.edit_message_text(f"❌ 更新「{sponsor_name}」狀態失敗")
 
