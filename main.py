@@ -16,14 +16,15 @@ SITCON Marketing Bot - Review 管理機器人
 import logging
 import os
 import sys
+from datetime import datetime, time
 
 from dotenv import load_dotenv
 
 # 載入環境變數（必須在匯入 handlers 之前）
 load_dotenv()
 
-from telegram import BotCommand, Update
-from telegram.ext import Application, ContextTypes, filters
+from telegram import BotCommand, Update, LinkPreviewOptions
+from telegram.ext import Application, ContextTypes, filters, Defaults
 
 from database import init_db
 from handlers import register_review_handlers, register_reviewer_handlers, register_reminder_handlers
@@ -115,7 +116,10 @@ def main():
     else:
         logger.warning("ALLOWED_CHAT_IDS 未設定，所有聊天室都可以使用指令")
 
-    app = Application.builder().token(bot_token).post_init(post_init).build()
+    # 設定全域預設值，關閉所有訊息的網址預覽 (OG Preview) 避免洗版
+    defaults = Defaults(link_preview_options=LinkPreviewOptions(is_disabled=True))
+
+    app = Application.builder().token(bot_token).post_init(post_init).defaults(defaults).build()
 
     # 建立聊天室過濾器
     chat_filter = filters.Chat(allowed_chat_ids) if allowed_chat_ids else None
