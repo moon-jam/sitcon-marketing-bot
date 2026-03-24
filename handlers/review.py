@@ -20,6 +20,7 @@ from database import (
     ReviewStatus,
     get_review_by_id,
     update_review_status_by_id,
+    get_need_fix_reviews,
 )
 from handlers.gitlab_client import gitlab_client
 from scheduler import (
